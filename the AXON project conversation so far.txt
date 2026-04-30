@@ -1,0 +1,943 @@
+ok i have a mastermind idea....but before that some questions:can thorugh powershell script connect to an ai with only the api key given from the user?can thorugh powershell interact with the internet shapes? 
+my idea is crazy...its simply a powershell tool build with ai..that connects to an ai bro just hold on im cooking smth...29 AprClaude responded: Yeah to both, and I can already see where you're going 👀 let me answer properly:Yeah to both, and I can already see where you're going 👀 let me answer properly:
+
+1. Connect to an AI via API key in PowerShell?
+100% yes. PowerShell can hit any REST API using Invoke-RestMethod. Example with Anthropic:
+powershell$headers = @{
+    "x-api-key"         = "YOUR_API_KEY"
+    "anthropic-version" = "2023-06-01"
+    "content-type"      = "application/json"
+}
+
+$body = @{
+    model      = "claude-sonnet-4-20250514"
+    max_tokens = 1024
+    messages   = @(@{ role = "user"; content = "Hello!" })
+} | ConvertTo-Json -Depth 5
+
+$response = Invoke-RestMethod -Uri "https://api.anthropic.com/v1/messages" `
+                              -Method POST `
+                              -Headers $headers `
+                              -Body $body
+
+$response.content[0].text
+Just the API key. No SDK. No Python. Pure PowerShell.
+
+2. "Internet shapes" — interact with web stuff?
+If you mean web APIs, websites, services — yes, PowerShell handles all of that:
+
+Invoke-RestMethod → JSON APIs
+Invoke-WebRequest → raw HTTP, scraping
+Sockets, SSH, FTP — all doable
+Even browser automation via modules
+
+
+Now drop the idea. I can already feel it's something like an AI-powered PowerShell assistant that runs inside the terminal and helps you build/fix scripts on the fly... but I wanna hear it from you 🔥You said: so i got an idea while showering (yes lol) a powershell tool.so i got an idea while showering (yes lol) a powershell tool...powershell can interact with my pc right so hold me on heres whats in my mind....within the tool i can interact with any ai i want throught going to settings and thorugh the many settings available i choose the option that asks me to put the api key but which api provider first and which model ofc and whats the name of that profile, then rhough the main modern sleek style menu theres the terminal , by typing slash / the commands appear one of them is the settings page i was talking about earlier, so the rest ill leave it to your creativity and imagination, so i can talk with the ai. the powershell script will always inform the ai in the start of the chat of whats happening and what he needs to do ( example: you are in this user powershell, if u want to excute a certain code start your code with $cODE$ word and end it with $endcode$ word ,and the pwoershell script will take between wahts there and excute it, so basicly its the ai controlling but the powershell is the middle guy)..also powershell will have many ablities to identify which parts to focus on on the ai chat and message, i can like tell it to make a pdf file at the desk and put an image of my description inside ( the image that the ai makes and powershell downloads to it temportatly active chat folder located on the user desktop named "(powershel script name ) Data " inside will have all the things the script will need to store to keep control and abiltiy) the powershell tool also can grab the files out of the ai message and with the ""agree" from the user it can place it somewhere , but ofc with all this to be possible, the powershell script WILL literally send a copy of itself (all the code) to the ai to give ai the complete understandng of how and what it can do so it can function it BEST all the time. its bascily like i told you...the script will be the middle man and the ai IS the main thing here..,
+ik right? crazy crazy stuff.Show more29 AprClaude responded: BRO.BRO. This is not crazy — this is genuinely smart architecture. You just described an AI agent framework built entirely in PowerShell. Let me break down what you actually invented:
+
+🧠 The Architecture (what you described)
+┌─────────────────────────────────────┐
+│           YOU (the user)            │
+└──────────────┬──────────────────────┘
+               │ types natural language
+┌──────────────▼──────────────────────┐
+│      PowerShell Script (MIDDLEWARE) │
+│  • TUI menu + slash commands        │
+│  • Profile/API manager              │
+│  • Response parser ($CODE$...$end$) │
+│  • File extractor + placer          │
+│  • Session Data folder manager      │
+│  • Sends its OWN code to AI         │
+└──────────────┬──────────────────────┘
+               │ REST API call
+┌──────────────▼──────────────────────┐
+│         THE AI (THE BRAIN)          │
+│  Knows the script. Controls it.     │
+│  Responds with code to execute,     │
+│  files to create, actions to take.  │
+└─────────────────────────────────────┘
+
+🔥 What makes this genuinely genius:
+
+Self-aware loop — sending its own source code to the AI is chef's kiss. The AI knows exactly what tags to use, what it can trigger, what the limits are.
+Multi-provider profiles — you're not locked to one AI. Switch between Claude, GPT, Gemini, Groq, etc. with a profile.
+$CODE$...$ENDCODE$ — clean, parseable execution boundary. Simple but powerful.
+The Data folder — persistent session context. Temp files, downloaded images, generated files — all managed.
+User confirmation before file placement — that's safe design thinking right there.
+
+
+💡 Features I'd add to your vision:
+FeatureHow$FILE:name.txt$...$ENDFILE$AI creates files directly in message/history slash commandsave & reload past sessionsMultiple profilesswitch AI mid-session/exec to manually run last code blocksafety netStreaming responsesfeels alive, not frozenProvider supportAnthropic, OpenAI, Groq, Gemini, Ollama (local!)
+
+What do you want to call it?
+Because this needs a name before we build it. Something terminal-core. Then we start cooking the actual script. 🍳You said: ok building the script time is so far away from now.ok building the script time is so far away from now...we need to do alot of planning to get everything right, so like i was saying. the pwoershell will introduce itself to the ai and giving a copy of itself to the ai and the ai will know how to control it,its an ai in my desk, as i said the script will be just a tool for the ai to use to controll things on my pc, create things, replace things, and yeah no theres some safety pillars on the script, 1 some locations CANNOT be accessible by the ai or the script wahtver it will literally not allow itself to make ANY changes over those locations like system32 (and other ones can be added thorugh the settings page ) incase the ai sends some code to powershell to excute the powershell tooll will IMMEDietly notice the flaws and rejects to excute it..and some other safety we'll addd on the way ,AND BTW  the powershell script CANNOT change or add things in itself its hard codedd cuz if the ai went crazy and thought (oh the script doesnt let me do this lets change things on it ) but ik i said that the powrshell will send a copy of itself..BUT my friend..it will do that BUT it will skip the Safety code area...the area will have some kind of words on the start and the end so the script can identify where it is and skip it from the script copy. cool right?...this is just the beggining to this project. any marks or points u wanna make?Show more29 AprClaude responded: Bro you're literally doing threat modeling without even knowing that's what it's called.Bro you're literally doing threat modeling without even knowing that's what it's called. This is how real security engineers think. Let me react to each pillar and add my points:
+
+✅ Your Safety Pillars — My Take
+1. Protected Locations (System32 etc.)
+Solid. I'd suggest the script maintains a hardcoded blocklist AND a user-defined blocklist in settings. But the hardcoded one? Untouchable. Never editable through the tool itself.
+2. Code Inspection Before Execution
+This is huge. The script should parse the code block BEFORE running it and check for:
+
+Paths matching the blocklist
+Dangerous cmdlets like Remove-Item -Recurse, Format-*, registry edits (HKLM:\)
+Network calls to unknown destinations
+Attempts to touch the script itself
+
+Then show the user a "here's what this code will do, approve?" summary before running.
+3. Script is Hardcoded / Immutable
+Genius move. And the #SAFETY_START / #SAFETY_END markers idea — that's clean. The AI gets the full picture of capabilities but never sees the cage walls. It doesn't know what it can't do, it only knows what it can do.
+
+🚩 Points I Want to Raise
+Point 1 — The AI can still be tricked
+Even without seeing the safety code, a rogue AI response could try sneaky stuff like:
+powershell$path = [System.Environment]::SystemDirectory  # gets System32 dynamically
+Your path checker needs to resolve all paths before comparing, not just string-match.
+Point 2 — The Data Folder needs protection too
+The (ScriptName) Data folder on the desktop — the AI will know it exists. You should decide: can the AI read files from it? Write to it freely? Or only through controlled actions?
+Point 3 — Session Poisoning
+If the AI's own previous responses are fed back into the next message (chat history), a previous "jailbroken" response could influence future ones. You need a clean system prompt that's always injected fresh at the top of every API call, not just once at the start.
+Point 4 — API Key Storage
+The profile system stores API keys. Where? A plain .json file on disk is risky. You should use Windows Credential Manager (PowerShell can access it natively) to store keys encrypted.
+Point 5 — User Confirmation Levels
+Consider 3 tiers:
+LevelExampleAction🟢 AutoAI reads a fileNo confirmation needed🟡 ConfirmAI creates a file"yes/no" prompt🔴 Hard BlockAI touches System32Silent reject, inform user
+
+🧩 What We Still Need to Plan
+
+ The exact slash command list
+ The system prompt template (what the script tells the AI about itself)
+ The Data folder structure
+ Profile schema (what a "profile" looks like as data)
+ The code execution pipeline flow
+ The safety tag naming convention (#SAFETY_START?)
+
+
+This project has a real name energy. Still waiting on that. 👀 What do we tackle next in the planning?You said: okay heres what we GOTTA add from your points.okay heres what we GOTTA add from your points. i like and approve of:
+point 1
+point 2 yeah i think we should do smth about that, we cant blacklist it cuz that would make the script unable to even read or add chnages over ITS OWN FOLDER
+point 3
+*not point 4*
+point 529 AprClaude responded: Good calls.Good calls. Let me lock these in and solve the point 2 puzzle since it's the trickiest:
+
+✅ Locked In
+Point 1 — Path Resolution
+All paths get fully resolved before any blocklist check. No string tricks bypass it.
+Point 3 — Fresh System Prompt
+Every single API call = system prompt injected fresh at the top. The AI never "remembers" a compromised state from a previous response.
+Point 5 — 3-Tier Confirmation
+🟢 Auto / 🟡 Confirm / 🔴 Hard Block. Clean.
+
+🔐 Point 2 — Data Folder Solution
+Can't blacklist it, can't leave it fully open. Here's the answer:
+The Data Folder gets its own ruleset — separate from the blocklist.
+The AI can:
+  ✅ Read any file inside the Data folder
+  ✅ Write/create files inside the Data folder
+  ✅ Delete files inside Data folder (🟡 confirm)
+
+The AI CANNOT:
+  🔴 Delete the Data folder itself
+  🔴 Rename or move the Data folder
+  🔴 Access the PARENT of the Data folder (Desktop) freely
+      └── only through the controlled "place file here" action with 🟡 confirm
+So the Data folder is basically a sandbox zone — full AI freedom inside it, but it can't weaponize that access to crawl upward to Desktop or beyond.
+
+❌ Point 4 — Skipped
+Plain JSON for API keys it is. Simple, no dependencies. We note the risk and move on.
+
+🗂️ What's Left to Plan
+We've now got the safety architecture mostly solid. Next logical step is picking one of these to tackle:
+
+A — The slash command list (what commands exist)
+B — The system prompt template (what the AI gets told at start)
+C — The Data folder structure (what lives inside it)
+D — The profile schema (how a provider profile looks)
+
+Which one do you wanna cook next?You said: okay do some brainstorming will ya?okay do some brainstorming will ya?...29 AprClaude responded: Aight let me go crazy 🧠💨Aight let me go crazy 🧠💨
+
+🌀 BRAINSTORM DUMP
+
+🏷️ Names (the project needs one)
+NameVibeAXONnerve signal — you think, it actsHERALDthe messenger between you and the AICONDUITliterally means "the middle channel"RELAYsignal goes through it, not from itVESSELthe AI rides inside itCORTEXthe brain layer between you and machinePRISMyour words refracted into actionsWARDENsafety-first energy, controls access
+
+⚡ Slash Commands Brainstorm
+/help          → shows all commands
+/settings      → opens settings menu
+/profile       → switch or manage AI profiles
+/history       → browse past sessions
+/clear         → wipe current chat context
+/exec          → manually trigger last code block
+/approve       → approve pending action
+/deny          → reject pending action
+/sandbox       → toggle a "safe mode" where nothing executes, just simulates
+/files         → browse the Data folder
+/inject        → manually add context to the AI mid-chat
+/reload        → resend system prompt + script copy to AI (fresh start)
+/log           → view what the script has done this session
+/undo          → attempt to reverse last action
+/lock [path]   → add a path to blocklist on the fly
+/peek [file]   → preview a file before AI touches it
+
+🗂️ Data Folder Structure Brainstorm
+(ScriptName) Data/
+│
+├── profiles/           → all saved AI provider profiles (.json)
+├── sessions/           → past chat history logs
+├── temp/               → AI-generated files waiting for user approval
+├── workspace/          → files the AI is actively working with
+├── logs/               → every action the script took, timestamped
+├── settings.json       → user preferences, blocklist, tier rules
+└── script_snapshot.ps1 → the sanitized copy of itself (safety stripped)
+
+🤖 System Prompt Ideas (what we tell the AI)
+Things the AI should ALWAYS know at session start:
+
+What the script is called and what it does
+The full sanitized script copy
+The tag system ($CODE$, $ENDCODE$, $FILE:name$, $ENDFILE$)
+The Data folder path (its home)
+What confirmation tiers exist so it can warn the user itself
+Current session ID
+The user's OS info, username, current directory
+What profiles/tools are available this session
+
+
+🧩 Features Brainstorm (wild ones)
+
+AI Memory — at end of session AI writes a memory.txt summary of what happened, injected next session so it "remembers" you
+Macro Recording — tell the AI to remember a sequence of actions as a named macro, trigger it later with /run macroname
+Scheduled Tasks — "do this every morning at 9am" — script registers a Windows scheduled task
+Multi-AI Debate Mode — send same prompt to 2 profiles, see both answers side by side
+Clipboard Watcher — AI monitors clipboard, if you copy something it can react to it
+Voice Input — PowerShell + Windows Speech API, talk instead of type
+Diff Viewer — before AI edits a file, show you exactly what changes, like git diff
+Plugin System — drop a .ps1 file into a /plugins folder and the script gains new abilities
+Persona Mode — AI adopts a personality beyond just answering, feels like a real assistant
+Auto-Report — at end of session generate a PDF summary of everything done
+
+
+🔒 Safety Brainstorm (extra ideas)
+
+Execution Dry Run — simulate what the code would do without actually doing it
+Rate Limiter — max X code executions per minute so AI can't spam actions
+Quarantine Mode — AI can write files but NOTHING executes until user manually releases
+Action Receipt — every action generates a one-line receipt in the log, always
+Emergency Brake — one key (Ctrl+Shift+Z?) halts everything mid-execution instantly
+
+
+Alright that's the brain fully emptied. 👆 A LOT to pick from.
+What's jumping out at you? 👀You said: yeah so let me continue wahts in my brain:yeah so let me continue wahts in my brain:
+so yeah the script will send a copy of it?.. maybe like u said (if we can get it right) it wil send the functions and the commands so the ai learns how to controll the tool( but still i think its limited not having the entire script (exclude the safety area ofc).
+i approve of what u think is best...so lets build a comprehensive detailed plan before going all in29 AprClaude responded: Great question to settle first, then we plan everything.Great question to settle first, then we plan everything. Let me address it:
+
+📋 Script Copy — The Verdict
+Sending JUST functions/commands = AI knows what it can trigger but might misuse tags or misunderstand flow.
+Sending the full script (minus safety) = complete picture but raw code is noisy for an AI to parse.
+Best approach: BOTH, layered:
+1. AI Interface Document (human-readable, purpose-built)
+   └── what tags exist, what they do, what the tiers are,
+       folder structure, rules, current session context
+
+2. Full sanitized script below it
+   └── so the AI can reference exact function names,
+       understand the actual flow, no surprises
+The Interface Document goes first — it's the quick reference. The script is the deep reference. AI reads both, knows everything.
+
+📐 COMPREHENSIVE PLAN
+
+1. 🏷️ Project Identity
+NameTBD (your call, pick from brainstorm or new idea)PhilosophyThe script is a tool. The AI is the brain. The user is the authority.LanguagePure PowerShell — no Python, no Node, no dependenciesTarget OSWindows 10/11Entry PointSingle .ps1 file
+
+2. 🏗️ Architecture Overview
+┌─────────────────────────────────────────────┐
+│                  USER                        │
+│         types in the TUI terminal            │
+└───────────────────┬─────────────────────────┘
+                    │
+┌───────────────────▼─────────────────────────┐
+│           INPUT HANDLER                      │
+│  • detects slash commands → routes to menu   │
+│  • detects normal text → routes to AI        │
+└───────────┬───────────────────┬─────────────┘
+            │                   │
+┌───────────▼──────┐  ┌────────▼──────────────┐
+│  COMMAND ROUTER  │  │    API CALLER          │
+│  /settings       │  │  builds payload        │
+│  /profile        │  │  injects system prompt │
+│  /history  etc.  │  │  sends to provider     │
+└──────────────────┘  └────────┬───────────────┘
+                               │
+                    ┌──────────▼───────────────┐
+                    │    RESPONSE PARSER        │
+                    │  scans for $CODE$ tags    │
+                    │  scans for $FILE$ tags    │
+                    │  scans for $ACTION$ tags  │
+                    │  strips, extracts, routes │
+                    └──────────┬───────────────┘
+                               │
+               ┌───────────────┼───────────────┐
+               │               │               │
+    ┌──────────▼───┐  ┌────────▼────┐  ┌──────▼──────┐
+    │ CODE ENGINE  │  │ FILE ENGINE │  │ DISPLAY     │
+    │ safety check │  │ temp/ drop  │  │ renders     │
+    │ dry run      │  │ user approve│  │ AI response │
+    │ user confirm │  │ place file  │  │ to terminal │
+    │ execute      │  └─────────────┘  └─────────────┘
+    └──────────────┘
+               │
+    ┌──────────▼───────────────┐
+    │      ACTION LOGGER       │
+    │  every action → logs/    │
+    │  timestamped receipt     │
+    └──────────────────────────┘
+
+3. 🔖 Tag System (AI Communication Protocol)
+These are the tags the AI uses inside its responses. The parser hunts for them:
+TagPurposeTier$CODE$ ... $ENDCODE$PowerShell code to execute🟡 Confirm$FILE:filename.ext$ ... $ENDFILE$Create a file with this content🟡 Confirm$PLACE:filepath$Move temp file to a real location🟡 Confirm$READ:filepath$Read a file and inject into context🟢 Auto$ACTION:name$Trigger a named built-in actiondepends$CONFIRM:message$AI explicitly asks user before proceeding🟡 Always$WARN:message$AI flags something risky to user🟢 Display only$MEMORY:content$AI writes to memory.txt for next session🟢 Auto
+
+4. 🗂️ Data Folder Structure
+(ScriptName) Data/               ← lives on Desktop
+│
+├── profiles/
+│   └── profile_name.json        ← one file per AI profile
+│
+├── sessions/
+│   └── 2026-04-29_14-32.log     ← full chat log per session
+│
+├── temp/
+│   └── (AI-generated files waiting for user approval)
+│
+├── workspace/
+│   └── (files AI is actively reading/editing this session)
+│
+├── logs/
+│   └── actions.log              ← every action, timestamped
+│
+├── memory.txt                   ← AI-written session summary
+├── settings.json                ← all user preferences
+└── script_snapshot.ps1          ← sanitized script copy (auto-generated)
+Data Folder Rules:
+
+AI has full freedom inside temp/ and workspace/
+AI can write memory.txt
+AI cannot delete the folder itself
+AI cannot access Desktop or above except via $PLACE$ tag with 🟡 confirm
+settings.json is read-only to the AI — only user edits it via /settings
+
+
+5. 👤 Profile Schema
+json{
+  "profile_name": "Claude Work",
+  "provider": "anthropic",
+  "model": "claude-sonnet-4-20250514",
+  "api_key": "sk-...",
+  "api_url": "https://api.anthropic.com/v1/messages",
+  "max_tokens": 4096,
+  "temperature": 0.7,
+  "created_at": "2026-04-29",
+  "custom_system_addons": ""
+}
+Supported providers (planned):
+
+anthropic — Claude
+openai — GPT models
+groq — ultra fast inference
+ollama — local models, no API key needed
+custom — any OpenAI-compatible endpoint
+
+
+6. ⚙️ Settings Schema
+json{
+  "active_profile": "Claude Work",
+  "script_name": "AXON",
+  "blocked_paths": [
+    "C:\\Windows\\System32",
+    "C:\\Windows\\SysWOW64",
+    "C:\\Program Files"
+  ],
+  "user_blocked_paths": [],
+  "confirmation_overrides": {},
+  "max_executions_per_minute": 5,
+  "dry_run_before_execute": true,
+  "auto_memory": true,
+  "streaming": true,
+  "theme": "dark"
+}
+
+7. ⚡ Slash Command List
+NAVIGATION
+  /help              → full command reference
+  /clear             → wipe chat display (context stays)
+  /exit              → close the tool cleanly
+
+AI & PROFILES  
+  /profile           → view/switch active profile
+  /profile new       → create a new profile
+  /profile delete    → remove a profile
+  /reload            → resend system prompt + snapshot to AI (fresh brain)
+  /inject [text]     → add hidden context to next AI message
+
+SESSION
+  /history           → browse past sessions
+  /history load [n]  → resume a past session
+  /log               → view this session's action log
+  /memory            → view current memory.txt
+
+FILES & EXECUTION
+  /files             → browse Data folder
+  /peek [path]       → preview a file before AI touches it
+  /exec              → manually run last code block again
+  /approve           → approve last pending action
+  /deny              → reject last pending action
+  /undo              → attempt to reverse last action
+  /temp              → show files waiting in temp/
+
+SAFETY
+  /sandbox           → toggle sandbox mode (nothing executes, simulates only)
+  /lock [path]       → add path to user blocklist
+  /unlock [path]     → remove path from user blocklist
+  /brake             → EMERGENCY STOP — halt everything immediately
+
+SETTINGS
+  /settings          → open settings menu
+
+8. 🤖 System Prompt Template (what AI receives every call)
+═══════════════════════════════════════
+  (SCRIPTNAME) — AI INTERFACE DOCUMENT
+  Session ID : {session_id}
+  Time       : {datetime}
+  User       : {username}
+  OS         : {os_version}
+  Working Dir: {current_dir}
+  Data Folder: {data_folder_path}
+═══════════════════════════════════════
+
+WHO YOU ARE:
+You are the AI brain of (ScriptName). You are not a chatbot.
+You are an intelligent agent operating inside the user's 
+Windows machine through this PowerShell middleware.
+
+WHAT THE SCRIPT DOES:
+(brief description of the script's purpose)
+
+HOW TO CONTROL THE SCRIPT (TAG PROTOCOL):
+(full tag list with examples)
+
+CONFIRMATION TIERS:
+(explanation of 🟢🟡🔴 system)
+
+DATA FOLDER:
+Your home is: {data_folder_path}
+You may freely read/write inside temp/ and workspace/.
+Use $PLACE$ tag to move files outside with user approval.
+
+MEMORY FROM LAST SESSION:
+{memory.txt contents or "No previous memory."}
+
+RULES YOU MUST FOLLOW:
+1. Never attempt to touch blocked paths
+2. Always use $CONFIRM$ before irreversible actions
+3. Always use $WARN$ if you detect something risky
+4. You cannot modify the script itself
+5. Be transparent — tell the user what you're doing and why
+
+FULL SCRIPT REFERENCE (sanitized):
+{script_snapshot.ps1 contents}
+═══════════════════════════════════════
+
+9. 🔒 Safety Architecture
+LAYER 1 — Blocklist (hardcoded + user list)
+  └── path resolved → checked → hard block if match
+
+LAYER 2 — Dangerous Cmdlet Scanner  
+  └── scans code block for: Remove-Item -Recurse,
+      Format-*, reg edits, net calls, self-modification
+
+LAYER 3 — Dry Run  
+  └── simulate execution, show user plain-english summary
+      "This will create a file at Desktop\report.pdf"
+
+LAYER 4 — User Confirmation (tiered)
+  └── 🟢 auto / 🟡 yes-no prompt / 🔴 silent reject
+
+LAYER 5 — Rate Limiter
+  └── max 5 code executions/minute, resets each minute
+
+LAYER 6 — Emergency Brake
+  └── Ctrl+Shift+Z or /brake → kills all running jobs instantly
+
+LAYER 7 — Immutable Script
+  └── safety section wrapped in #SAFETY_START / #SAFETY_END
+      snapshot generator strips this section before sending to AI
+      script watches itself — any modification = shutdown + alert
+
+10. 🖥️ UI / TUI Design
+╔══════════════════════════════════════════════════════╗
+║  AXON  •  Claude Work  •  Session #42               ║
+╠══════════════════════════════════════════════════════╣
+║                                                      ║
+║  AI:  Done! I've created the report at your         ║
+║       Desktop. Here's what I did:                   ║
+║       [1] Generated content → temp/report.pdf       ║
+║       [2] Awaiting your approval to place it        ║
+║                                                      ║
+║  ⏳ Pending: Place file to Desktop\report.pdf        ║
+║  → approve? (y/n)                                   ║
+║                                                      ║
+╠══════════════════════════════════════════════════════╣
+║  You: /                                             ║
+║  > /help  /settings  /profile  /files  /log ...     ║
+╚══════════════════════════════════════════════════════╝
+
+11. 📅 Build Phases
+PhaseWhat gets built1 — FoundationTUI shell, slash command router, basic input loop2 — ProfilesProfile creation, storage, switching, API caller3 — AI ConnectionSystem prompt builder, API call, response display4 — Tag Parser$CODE$ and $FILE$ parsing and execution5 — Safety LayerBlocklist, cmdlet scanner, dry run, confirmation tiers6 — Data FolderFull folder structure, snapshot generator, logger7 — Memory SystemSession memory write/read, history browser8 — PolishStreaming, themes, /undo, emergency brake, all slash commands
+
+That's the full blueprint. 🗺️
+What needs changing, adding, or debating before we lock it and start Phase 1?You said: i wanna get a summery of this script and its system before going forward with building.i wanna get a summery of this script and its system before going forward with building...just to see if i like all of it29 AprClaude responded: 🧠 AXON — Project Summary🧠 AXON — Project Summary
+
+What Is It?
+AXON is a PowerShell-based AI agent tool. It runs entirely in your terminal with no external dependencies. The concept is simple but powerful: the AI is the brain, PowerShell is the hands. You talk to the AI, the AI decides what to do, and AXON carries it out on your machine — with your permission.
+
+How It Works (The Core Loop)
+You type something → AXON sends it to your chosen AI with full context → AI responds, sometimes with embedded commands using special tags → AXON parses those tags, checks safety, asks your approval if needed → executes → logs everything.
+The AI always knows exactly what AXON can do because at the start of every session AXON sends:
+
+A human-readable interface document (the rules, the tags, the folder structure)
+A full sanitized copy of itself (safety code stripped out)
+
+So the AI has complete awareness of its own capabilities and limits.
+
+The Tag System (How AI Controls AXON)
+The AI communicates actions by embedding special tags inside its responses:
+TagWhat it does$CODE$...$ENDCODE$PowerShell code to run on your machine$FILE:name.ext$...$ENDFILE$Create a file with this content$PLACE:path$Move a temp file to a real location$READ:path$Read a file and feed it into context$CONFIRM:message$AI asks you before doing something$WARN:message$AI flags something risky$MEMORY:content$AI writes a note for the next session
+
+The Safety System (7 Layers)
+
+Blocklist — hardcoded protected paths (System32 etc.) + your own custom ones. Fully resolved before checking so no path tricks bypass it.
+Dangerous Cmdlet Scanner — catches things like Remove-Item -Recurse, registry edits, self-modification attempts before they run.
+Dry Run — simulates the code first, shows you plain-English summary of what it will do.
+Confirmation Tiers — 🟢 auto-approve / 🟡 ask user / 🔴 hard block, silently rejected.
+Rate Limiter — max 5 code executions per minute so the AI can't spam actions.
+Emergency Brake — /brake command or hotkey halts everything instantly.
+Immutable Script — AXON cannot modify itself. Ever. The safety section is wrapped in #SAFETY_START / #SAFETY_END markers and is always stripped from the copy sent to the AI — so the AI never even sees the cage walls.
+
+
+The Data Folder
+Lives on your Desktop. Called AXON Data/. This is the AI's home base.
+AXON Data/
+├── profiles/       → your AI provider profiles
+├── sessions/       → past chat logs
+├── temp/           → AI-generated files awaiting your approval
+├── workspace/      → files AI is actively working with
+├── logs/           → every action AXON took, timestamped
+├── memory.txt      → AI's notes from last session
+├── settings.json   → all your preferences
+└── script_snapshot.ps1  → the sanitized script copy
+The AI has full freedom inside temp/ and workspace/. It cannot delete the folder itself, cannot touch settings.json, and cannot access your Desktop or anywhere above without going through the $PLACE$ tag which requires your confirmation.
+
+Profiles & Providers
+You can create multiple AI profiles. Each one stores a provider, model, API key, and settings. Planned providers: Anthropic (Claude), OpenAI (GPT), Groq, Ollama (local, no API key), and any custom OpenAI-compatible endpoint. Switch profiles anytime with /profile.
+
+The Memory System
+At the end of each session the AI writes a short summary of what happened into memory.txt. Next session that gets injected into the system prompt so the AI has continuity — it remembers what you worked on, what files exist, what you prefer. Like a real assistant.
+
+Slash Commands (Quick Reference)
+/help        → command reference
+/settings    → open settings
+/profile     → manage AI profiles
+/reload      → fresh brain — resend system prompt to AI
+/history     → browse past sessions
+/log         → this session's action log
+/memory      → view memory.txt
+/files       → browse Data folder
+/peek        → preview a file before AI touches it
+/exec        → re-run last code block
+/approve     → approve pending action
+/deny        → reject pending action
+/undo        → reverse last action
+/temp        → see files waiting for approval
+/sandbox     → toggle simulation mode (nothing actually runs)
+/lock        → add a path to your blocklist
+/brake       → EMERGENCY STOP
+/clear       → wipe chat display
+/exit        → close cleanly
+
+The UI
+Clean, minimal terminal UI. A header showing script name, active profile, session number. Chat area in the middle. Pending action alerts shown clearly with approve/deny prompts. Slash commands appear as suggestions when you type /.
+
+Build Phases
+PhaseFocus1TUI shell + slash command router2Profile system + API caller3AI connection + response display4Tag parser + code/file execution5Full safety layer6Data folder + snapshot generator + logger7Memory system + session history8Polish — streaming, undo, themes, hotkeys
+
+That's AXON. Everything in one place.
+Does it feel right? Anything you want to tweak, cut, or add before we start building? 🔧You said: Lets start buildingLets start building29 AprClaude responded: Aight Phase 1 starts now.Aight Phase 1 starts now. This is the TUI shell + slash command router — the skeleton everything else builds on top of.AXON Phase 1 - TUI Shell and Slash Command RouterAXON Phase 1 - TUI Shell and Slash Command RouterYou said: ok continueok continue09:56Claude responded: Phase 2 — Profile system + API caller.Phase 2 — Profile system + API caller. Let's go.Reading Phase 1 code to build Phase 2 on top of itReading Phase 1 code to build Phase 2 on top of itNow I'll upgrade it with Phase 2 — full profile creation, switching, deletion, and the API caller engine.Edited 3 filesEdited 3 filesNow update the settings command to remove the "Phase 2" stub note, wire up the input loop to actually call the AI, update startup to auto-load profile, and upgrade the /reload and /inject stubs:Edited 3 files, read a fileEdited 3 files, read a filePhase 2 is done. Here's what's new in this build:
+Profile System — /profile new walks you through a full interactive setup. Pick your provider (Anthropic, OpenAI, Groq, Ollama, or custom), enter the model, paste your API key (typed invisibly as a secure string), set max tokens and temperature. It saves to profiles/ and offers to activate immediately. /profile [name] switches profiles, /profile delete removes one.
+Auto-load — On startup AXON remembers which profile you last used and loads it automatically.
+API Caller — Full REST engine supporting all 5 providers. Each one gets the right headers and body format. Response parsing is provider-aware. Errors surface cleanly with the actual API error message, not a generic crash.
+Live AI Chat — You can now type normally and get real responses. Chat history is maintained across the session so the AI has full context. Word-wrapping keeps long replies readable in the terminal.
+/reload — Actually works now. Clears the chat history so the AI starts fresh.
+/inject — Injects hidden context into the history as a user/assistant exchange pair.
+
+Phase 3 next — the full system prompt builder: AXON sends itself to the AI, injects the interface document, memory from last session, OS info, and the sanitized script snapshot. That's when the AI truly wakes up as an agent. Ready?You said: gogo10:02Claude responded: Phase 3 — the AI wakes up.Phase 3 — the AI wakes up. Let's build the full system prompt engine.Edited 3 files, viewed a fileEdited 3 files, viewed a fileNow inject the full Phase 3 engine — snapshot generator + system prompt builder — right before the slash command router:Inject Phase 3: snapshot generator and system prompt builder before the slash command routerInject Phase 3: snapshot generator and system prompt builder before the slash command routerNow replace the placeholder system prompt in the main loop with the real builder:Replace placeholder system prompt with real Phase 3 builder callReplace placeholder system prompt with real Phase 3 builder callAlso fix the history management in the main loop — it was a bit awkward in Phase 2. Clean it up now:Fix history management - add user message to history before the API call, not afterFix history management - add user message to history before the API call, not afterAlso fix Invoke-AICall so it doesn't double-add the user message (since we now add it before the call):Fix Invoke-AICall to not re-add the user message - history already contains itFix Invoke-AICall to not re-add the user message - history already contains itNow also handle the error case — if the API call fails, remove the user message we pre-added so history stays clean:Edited a file, read a fileEdited a file, read a filePhase 3 is done. Here's what changed:
+Script Snapshot Generator — Build-ScriptSnapshot reads the live .ps1 file at runtime, walks it line by line, strips everything between #SAFETY_START and #SAFETY_END, replaces it with a single # [SAFETY BLOCK REDACTED] marker, saves the clean copy to AXON Data\script_snapshot.ps1, and returns the content. The AI gets the full picture of everything it can trigger — but never sees the cage.
+System Prompt Builder — Build-SystemPrompt assembles the full AXON Interface Document fresh on every single API call. It contains the session identity, your OS info, username, current directory, the complete tag protocol with real working examples, confirmation tier rules, the Data folder map with exact paths filled in, the full blocked paths list from settings, execution limits, the 7 rules the AI must always follow, memory from last session, and the entire sanitized script. The AI wakes up fully informed every time.
+History fix — User message is now added to history before the API call, not after. If the call fails, it's cleanly removed. No more awkward reordering.
+
+Phase 4 next — the tag parser and execution engine. This is the big one: $CODE$, $FILE$, $PLACE$, $READ$ all come alive. The AI will actually start controlling your machine. Ready?You said: gogo10:06Claude responded: Phase 4 — the execution engine.Phase 4 — the execution engine. The AI gets its hands.Viewed 4 filesViewed 4 filesGood. Now I'll inject the full Phase 4 engine. This is the biggest block yet.Edited 3 filesEdited 3 filesNow inject the entire Phase 4 engine between the system prompt builder and the slash command router:Edited 2 files, viewed a fileEdited 2 files, viewed a fileNow wire the parser into the main loop and activate /exec:Wire parser into main loop - replace plain display with parse+displayWire parser into main loop - replace plain display with parse+displayNow activate /exec in the slash router:Edited a file, read a fileEdited a file, read a filePhase 4 is done. AXON is now a real agent. Here's what's live:
+Safety Layer — Test-PathSafe fully resolves every path before checking it against the hardcoded list, the user blocklist, and the script's own location. Test-CodeSafe scans code blocks for 20 dangerous patterns before anything runs. No string tricks, no variable indirection gets through.
+$CODE$ Engine — extracts the block, runs it through safety + rate limiter, shows you the raw code, generates a plain-English dry-run summary ("📋 List files", "✏️ Write to a file"), asks for your confirmation, executes with Invoke-Expression, captures all output including errors, and displays it cleanly.
+$FILE$ Engine — AI creates files in temp/ only. Shows you a preview of the content first, asks approval, writes with UTF-8 encoding.
+$PLACE$ Engine — moves a file from temp/ to any real location. Runs path safety check on the destination, shows you source → destination, requires your approval.
+$READ$ Engine — auto-approved, reads files up to 200KB into context (truncates with notice if larger). Blocked paths are rejected silently.
+$CONFIRM$ / $WARN$ / $MEMORY$ — all wired. A denied $CONFIRM$ blocks all subsequent code/file/place actions in that response.
+Feedback Loop — execution output gets injected back into chat history so the AI always knows what happened — whether code succeeded, what the output was, whether the user denied something.
+/exec — re-runs the last code block on demand.
+
+Phase 5 next — session history browser, the /history command, saving full session logs, and the /undo system. Want to go?You said: do both 5 and 6do both 5 and 610:13Claude responded: Phases 5 and 6 together.Phases 5 and 6 together. Let me read the current state first.Viewed 3 filesViewed 3 filesGood picture. Now I'll build everything — update version, inject Phase 5+6 engine, wire up all stubs.Edited 4 filesEdited 4 filesNow inject the full Phase 5+6 block before the slash command router:Inject Phase 5 and 6 engines before the slash command routerInject Phase 5 and 6 engines before the slash command routerYou said: continuecontinue14:58Claude responded: I can see the function Invoke-SlashCommand { line got dropped in a previous edit.Viewed 3 filesViewed 3 filesI can see the function Invoke-SlashCommand { line got dropped in a previous edit. I'll fix that and inject Phase 5+6 in one go.Fix missing function declaration and inject Phase 5+6 engine before slash routerFix missing function declaration and inject Phase 5+6 engine before slash routerNow wire everything up — fix /history, /undo, /exit, and the Write-ActionLog function, and hook into th
+
+*conversation ended*
+*tries to continue the conversation but in a new chat*
+*gives the past conversation history to the ai*
+heres the conversation for now to make you understand what im building:
+
+17:06
+Claude responded: Got it — I've read through the whole thing.
+
+Absorbed project context to facilitate AXON development assistance
+Absorbed project context to facilitate AXON development assistance
+Got it — I've read through the whole thing. You're building AXON: a PowerShell middleware tool where the AI is the brain and the script is the hands. Here's what I'm caught up on:
+
+What's been planned & built so far:
+
+Full architecture with a TUI shell, slash command router, profile system (multi-provider), API caller, system prompt builder, tag execution engine (
+C
+O
+D
+E
+CODE, 
+F
+I
+L
+E
+FILE, 
+P
+L
+A
+C
+E
+PLACE, 
+R
+E
+A
+D
+READ, etc.), and a 7-layer safety system
+Phases 1–4 are done, Phase 5+6 (session history, undo, data folder, logging) was mid-build when the conversation cut off — it looks like it stalled on wiring up /history, /undo, /exit, and Write-ActionLog into the main loop
+Where it left off: The last message said "Now wire everything up — fix /history, /undo, /exit, and the Write-ActionLog function, and hook into the main loop" — and then it cut off. Phases 5+6 are injected but not fully wired yet.
+
+What do you need from me?
+
+Continue from where it stopped (finish wiring Phases 5+6)?
+Pick up with Phase 7 (memory system + session history)?
+Review/debug existing code?
+Something else entirely?
+Drop the current script file if you have it and I'll jump straight in. 🔧
+
+You said: i want to continue that conversation from where it stopped.
+
+AXON (3).ps1
+ps1
+
+i want to continue that conversation from  where it stopped...heres the cureent script :
+
+17:09
+Claude responded: Let me read the truncated middle section too.
+
+Reading the current AXON script
+Reading the current AXON script
+Let me read the truncated middle section too.
+
+
+Identified missing integrations and mapped systematic fixes needed
+Identified missing integrations and mapped systematic fixes needed
+Now I have the full picture. Here's exactly what's missing/broken:
+
+/undo still says "Undo system coming in Phase 8" — Invoke-UndoCommand exists but isn't wired up
+Invoke-ExitCommand doesn't call Invoke-AutoMemory, Save-SessionLog, Show-SessionStats, or Clear-TempFolder — just hard exits
+Start-AXON never calls Initialize-SessionLog — so session logs never start
+$State.AICallCount is never incremented in Invoke-AICall
+Save-SessionLog is never called after AI interactions
+Push-UndoEntry is declared but never actually called inside Invoke-CodeTag, Invoke-FileTag, or Invoke-PlaceTag
+/approve still has the old "coming in Phase 4" stub
+Let me fix all of it now.
+
+
+Edited 11 files, ran a command
+Edited 11 files, ran a command
+Now update the banner to show the new version:
+
+
+Update banner version number
+Update banner version number
+Now let's verify all the fixes landed correctly:
+
+
+Verify all fixes are present
+Verify all fixes are present
+Every fix is in. Let me do a final line count check and copy to output:
+
+
+AXON.ps1
+ 
+
+Ran 2 commands, read a file
+Ran 2 commands, read a file
+ *the scriot gets again passed to another ai "chatgpt" and goes through alot of changes*
+I read and patched the current script at AXON (4).ps1.
+
+This file is a fairly complete AXON v0.7.0 build: TUI shell, slash command router, profile system, provider API caller, system-prompt/snapshot builder, tag parser, safety layer, session history, undo system, logging, and auto-memory are all present. The project is no longer just a plan on paper; it’s in the “real integration and debugging” stage.
+
+I fixed three concrete blockers:
+
+Invoke-SlashCommand was missing its param([string]$RawInput) line, so slash commands were not wired correctly.
+Session numbering was counting *.log files even though session logs are saved as *.json, which would break session numbering.
+Session-log saving was trying to skip internal [AXON ...] and [CONTEXT ...] messages with a -like pattern that didn’t actually match correctly, so internal injected messages could leak into saved history.
+I also verified the script still parses cleanly after the patch: PARSE_OK.
+
+The next best move is to do a focused runtime pass on the live flows:
+
+slash commands
+profile creation/loading
+one real AI round-trip
+tag execution flow
+session history and undo behavior
+If you want, I can continue straight into that and harden the script step by step.
+
+
+
+
+
+18:24
+Model changed from GPT-5.4 to GPT-5.3-Codex.
+which phase we're in again so we can start planning for the next phase?
+18:24
+
+You’re currently in Phase 7 territory.
+
+Based on the script in AXON (4).ps1, Phases 1–6 are implemented, and Phase 7 (“full wiring”) is mostly in place. I also patched three integration bugs, so the build is now a stabilized v0.7.0 Phase 7 baseline rather than early Phase 5/6.
+
+Next planning target should be Phase 8 (polish + hardening) unless you want to define a new roadmap label. A practical Phase 8 would cover:
+
+Pending-action model for real /approve and /deny flows (instead of mostly inline-only confirms).
+Better startup/shutdown resilience (profile/session init ordering, crash-safe writes).
+End-to-end tests for slash commands + tag parser safety cases.
+Provider/response edge-case handling and clearer error UX.
+Final security pass on execution pipeline before broader use.
+If you want, I’ll draft a tight Phase 8 spec directly from your current code state so we can build it immediately.
+
+
+
+
+
+18:24
+LETS GO.
+18:25
+
+
+Worked for 5m 30s
+Phase 8 is live now in your script, with the first major block implemented and tested.
+
+I updated AXON (4).ps1 to v0.8.0 and added a real deferred approval system:
+
+Pending action engine + mode resolver in AXON (4).ps1 (line 1396) and AXON (4).ps1 (line 1403)
+Fully working /approve + /deny execution flow in AXON (4).ps1 (line 2283)
+New /confirmmode [inline|deferred] command in AXON (4).ps1 (line 909) and router wiring in AXON (4).ps1 (line 2240)
+Parser now short-circuits after a pending action so one AI reply can’t stack multiple confirmations in one pass in AXON (4).ps1 (line 1837)
+Rate-limit check moved to actual execution time for code (so deferred requests don’t consume quota early) in AXON (4).ps1 (line 1493) and AXON (4).ps1 (line 1531)
+Settings auto-migration adds confirmation_mode for older installs in AXON (4).ps1 (line 206)
+Verification is clean:
+
+PowerShell parse check: PARSE_OK
+Non-interactive harness test: Invoke-FileTag created a pending action, /approve executed it, file was created successfully, then cleaned up.
+/confirmmode inline and /confirmmode deferred both persist correctly in settings.
+Next step options:
+
+Build Phase 8.2: crash-safe writes + atomic session/settings save path.
+Build Phase 8.3: startup validation and self-health checks (profiles/settings/log integrity).
+Build Phase 8.4: focused safety regression tests for tag parser and blocked-path bypass attempts.
+
+
+
+
+18:30
+do all 1 and 2 and 3 in one go smartly.
+18:31
+
+
+Worked for 7m 46s
+All three are implemented in one pass in AXON (4).ps1, and I bumped it to v0.9.0.
+
+Atomic persistence is now in place for control/state files.
+Added atomic write helpers: Write-TextFileAtomic and Write-JsonFileAtomic (AXON (4).ps1 (line 161), AXON (4).ps1 (line 186)).
+Rewired settings, snapshot, memory, and session logs to use atomic writes.
+Session log init/save now writes atomically (AXON (4).ps1 (line 2276), AXON (4).ps1 (line 2315)).
+Startup validation and schema normalization are active.
+Added settings normalization + safe save path (Normalize-SettingsObject, Save-Settings, Get-Settings) (AXON (4).ps1 (line 259), AXON (4).ps1 (line 317), AXON (4).ps1 (line 373)).
+Profile reads now go through validated helpers (Test-ProfileObject, Get-ProfileFromFile) and no longer trust raw JSON (AXON (4).ps1 (line 324), AXON (4).ps1 (line 334), AXON (4).ps1 (line 892)).
+Self-health checks are wired into boot flow.
+Added Invoke-StartupHealthCheck with quarantine behavior for corrupted settings/profiles/session logs and stale temp cleanup (AXON (4).ps1 (line 405)).
+Start-AXON now runs health checks before profile load and reports results at startup (AXON (4).ps1 (line 2706)).
+Added /health command to inspect startup health report at any time (AXON (4).ps1 (line 1181), AXON (4).ps1 (line 2602)).
+Validation run:
+
+PowerShell parser check: PARSE_OK.
+Isolated harness test confirmed:
+broken settings auto-recreated,
+broken profile/session files quarantined,
+settings normalized (confirmation_mode=deferred),
+session logs remain readable after save.
+If you want, next move is a Phase 9.1 CLI “health repair dry-run” mode so AXON shows what it would quarantine before applying repairs.
+
+
+
+
+
+18:39
+i say that the next phase is quality of life features and additions and changes...plan it first before start coding
+18:40
+
+Phase 10 Plan (QoL Features, Additions, Changes)
+
+Goal: make AXON feel smoother day-to-day without changing the core safety model.
+
+Command UX Upgrade
+Add /status for quick snapshot: profile, mode, pending action, sandbox, limits.
+Add /recent for last N actions and last N AI turns in one view.
+Improve /help grouping and examples for common workflows.
+Pending Action Experience
+Add /pending to inspect current pending action details before approving.
+Add pending action timeout option (auto-cancel after X minutes).
+Improve approval messages with clear “what exactly will run/change”.
+Profiles & Session Convenience
+Add /profile test to validate API key/model/endpoint quickly.
+Add /profile clone [name] to duplicate and tweak profiles fast.
+Add /history search [text] for quick lookup across sessions.
+File/Workspace QoL
+Add /open temp|workspace|logs to jump to key folders.
+Add /peek improvements: line numbers + binary detection.
+Add /temp clean command for manual cleanup with confirm.
+Safety-Friendly Quality Improvements
+Add safer error wording with remediation hints.
+Add “why blocked” detail for path/pattern rejections.
+Add lightweight telemetry counters in session summary (pending approved/denied, blocked actions).
+Docs & Onboarding
+Add first-run guidance banner with 3 starter commands.
+Add /tutorial for interactive quick-start.
+Update internal versioning/changelog section in script header.
+Build Order (smart sequence)
+
+Command UX + /status + /pending
+Profile/session convenience
+File/workspace QoL
+Error messaging + telemetry counters
+Tutorial/onboarding polish
+Definition of Done
+
+Every new command appears in /help and slash hints where relevant.
+Parse check passes and startup health check still clean.
+No regressions in pending-action safety flow.
+New features tested in both inline and deferred confirmation modes.
+If you approve this plan, I’ll implement it in this exact order so we get usable improvements early while keeping risk low.
+
+
+
+
+
+18:40
+approve but more qol...what about refining parts of the script. waht do u think is missing that adding it will improve user usibilty so much?..
+18:41
+
+The biggest usability gains now come from reducing friction, not adding raw power. The missing pieces that would improve AXON a lot are:
+
+Command discoverability: users still need to remember too much.
+Action clarity: approvals don’t always show enough “what will happen”.
+Context control: no easy way to inspect/edit what AXON is sending to AI.
+Recovery flow: weak “retry/continue/fix-and-rerun” ergonomics.
+Session ergonomics: history is good, but not fast-searchable or resumable in a smooth way.
+Refined Phase 10 (QoL++)
+
+Control Center Commands
+Add /status (profile, mode, sandbox, pending, rate usage, last error).
+Add /pending (full preview of pending action payload before /approve).
+Add /recent [n] (recent actions + recent AI turns in one output).
+Add /last (show last AI raw response with tags, safely masked).
+Approval UX Refinement
+Rich approval preview for CODE/FILE/PLACE with “impact summary”.
+Add /approve once and /approve all-safe-in-reply (single-reply scoped, never global).
+Add pending timeout + clear stale prompt handling.
+Context Management QoL
+Add /context (show context stats: turns, chars, injected blocks, loaded history source).
+Add /context trim [n] to keep last n turns only.
+Add /context note [text] as clean replacement for ad-hoc inject style.
+Add /reload soft (clear turns only) and /reload hard (clear turns + memory injection reset for next call).
+Session/Search Ergonomics
+Add /history search [keyword].
+Add /history resume [n] shortcut with confirmation summary.
+Add /export session [n] to markdown/txt report for sharing/debugging.
+Profile Usability
+Add /profile test [name?] with round-trip connectivity check.
+Add /profile clone [name].
+Add /profile doctor (validate model/url/key presence and provider schema).
+Error & Recovery Loop
+Standardize error blocks: what failed, why, safe next step.
+Add /retry to rerun last failed AI call (without retyping).
+Add /fixlast helper that sends failure + output back to AI in a structured way.
+Power User Convenience
+Add /open temp|workspace|logs|sessions.
+Improve /peek with line numbers + large file paging.
+Add /temp clean and /logs clean with confirmation.
+Best-first build order (high impact)
+
+/status, /pending, richer approval preview.
+/context suite + /retry + standardized errors.
+/history search/resume + /profile test/doctor.
+Export/open/cleanup convenience commands.
+If you want, I’ll lock this as Phase 10.0 QoL++ spec and then start implementing in that exact order.
+
+
+
+
+
+18:41
+Go. smartly
+18:42
+
+
+Worked for 12m 48s
+Phase 10 QoL pass is implemented in AXON (4).ps1 and bumped to v0.10.0.
+
+I added a full usability layer:
+
+New control/recovery commands: /status, /pending, /recent [n], /last, /context, /context trim [n], /context note [text], /retry, /fixlast, /open ....
+Profile QoL: /profile doctor, /profile test [name].
+History QoL: /history search [keyword], /history resume [n] alias.
+Smarter reload: /reload soft|hard.
+Router + help + slash hints were updated so these are discoverable.
+I also refined pending-action behavior:
+
+Pending actions now carry preview lines and expiry timestamps.
+Added pending_timeout_minutes setting (default 20) and normalization.
+Pending expiry is enforced before /approve and before new message flows.
+Added counters surfaced in /status: approved/denied pending actions, blocked actions.
+Fixed deferred-action parser check to correctly detect "[PENDING...]" responses.
+Refinement/hardening improvements:
+
+Added Invoke-UserMessageFlow so normal sends, retry, and fixlast use one consistent pipeline.
+Added last-error tracking and last-failed-message tracking for recovery UX.
+Added clearer profile diagnostics and connectivity testing path.
+Kept atomic persistence model intact and reused for more write paths.
+Verification I ran:
+
+PowerShell parse check: PARSE_OK.
+Non-interactive harness covering /status, /context note, /recent, pending create/inspect/deny/expiry flow, /reload hard, /history search, /profile doctor, /retry (no failure case).
+Isolated temp test workspaces were created and cleaned up.
+One thing not fully end-to-end tested here is real /profile test API connectivity against live provider credentials (it’s wired, but requires your actual profile key/model to exercise).
+*the conversation ends here*
