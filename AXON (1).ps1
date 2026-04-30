@@ -4,7 +4,14 @@
 #  v1.0 Mega A: Smart Brain, Real Streaming, Auto Functions,
 #               New Tags ($SEARCH$ $OPEN$ $NOTIFY$ $CLIP$ $MACRO$
 #               $STATUS$ $PLUGIN$), Function Registry, Context Mgr
-#  Version: 1.0.0
+#  v1.1 Mega B: Atomic Writes, Health Check, Deferred Approval,
+#               QoL Commands (/status /pending /recent /last /context
+#               /retry /fixlast), Profile Tools (/test /clone /doctor),
+#               History Tools (/search /resume /export),
+#               Error Recovery Loop, Convenience (/open /logs /temp clean),
+#               Intent Classifier (local routing), Multi-Step Task Tracker
+#               ($TASK$ tag + /tasks command)
+#  Version: 1.1.0
 # ================================================================
 
 #SAFETY_START
@@ -26,7 +33,7 @@ $AXON_SELF_PATH = $MyInvocation.MyCommand.Path
 #  GLOBAL STATE
 # ================================================================
 
-$AXON_VERSION  = "1.0.0"
+$AXON_VERSION  = "1.1.0"
 $AXON_NAME     = "AXON"
 $SESSION_ID    = Get-Date -Format "yyyyMMdd-HHmmss"
 $DataFolder    = Join-Path ([Environment]::GetFolderPath("Desktop")) "AXON Data"
@@ -38,6 +45,8 @@ $State = @{
     ChatHistory          = [System.Collections.ArrayList]@()
     PendingAction        = $null
     LastCodeBlock        = $null
+    LastUserInput        = ""
+    LastAIReply          = ""
     SessionStart         = Get-Date
     ExecutionCount       = 0
     ExecutionWindowStart = Get-Date
@@ -45,11 +54,12 @@ $State = @{
     MessageCount         = 0
     SessionLogPath       = $null
     AICallCount          = 0
+    LastAPIError         = ""
     # v1.0 — Smart Brain
-    SmartMemory          = @{}          # structured JSON knowledge base
+    SmartMemory          = @{}
     # v1.0 — Context manager
     TokenEstimate        = 0
-    MaxContextTokens     = 6000         # soft ceiling before trimming
+    MaxContextTokens     = 6000
     # v1.0 — Function registry
     FunctionRegistry     = [ordered]@{}
     # v1.0 — Macros
@@ -58,6 +68,10 @@ $State = @{
     LoadedPlugins        = [System.Collections.ArrayList]@()
     # v1.0 — Status bar message
     StatusBarMsg         = ""
+    # v1.1 — Deferred approval queue
+    ApprovalQueue        = [System.Collections.ArrayList]@()
+    # v1.1 — Multi-step task tracker
+    Tasks                = [System.Collections.ArrayList]@()
 }
 
 
@@ -79,6 +93,9 @@ $UI = @{
     DimText   = "DarkGray"
     BodyText  = "Gray"
     CmdHint   = "DarkCyan"
+    TaskDone  = "Green"
+    TaskPend  = "Cyan"
+    TaskWait  = "DarkGray"
 }
 
 
@@ -106,9 +123,14 @@ function Write-Header {
     $sandboxTag   = if ($State.SandboxMode) { "  [SANDBOX]" } else { "" }
     $tokenLabel   = if ($State.TokenEstimate -gt 0) { "  ~$($State.TokenEstimate)t" } else { "" }
     $pluginLabel  = if ($State.LoadedPlugins.Count -gt 0) { "  +$($State.LoadedPlugins.Count) plugin(s)" } else { "" }
+    $taskLabel    = if ($State.Tasks.Count -gt 0) {
+        $done = ($State.Tasks | Where-Object { $_.status -eq "done" }).Count
+        "  Tasks $done/$($State.Tasks.Count)"
+    } else { "" }
+    $pendLabel    = if ($State.ApprovalQueue.Count -gt 0) { "  [$($State.ApprovalQueue.Count) pending]" } else { "" }
 
     Write-Divider
-    Write-Host "  $AXON_NAME  •  $profileLabel  •  $sessionLabel$sandboxTag$tokenLabel$pluginLabel" -ForegroundColor $UI.Header
+    Write-Host "  $AXON_NAME  •  $profileLabel  •  $sessionLabel$sandboxTag$tokenLabel$pluginLabel$taskLabel$pendLabel" -ForegroundColor $UI.Header
     if ($State.StatusBarMsg) {
         Write-Host "  $($State.StatusBarMsg)" -ForegroundColor $UI.SysText
     }
@@ -130,11 +152,11 @@ function Write-Msg {
     switch ($Role) {
         "user"    { Write-Host "  You : " -ForegroundColor $UI.UserLabel -NoNewline; Write-Host $Content -ForegroundColor White }
         "ai"      { Write-Host "  AI  : " -ForegroundColor $UI.AILabel   -NoNewline; Write-Host $Content -ForegroundColor $UI.BodyText }
-        "system"  { Write-Host "  ●   " -ForegroundColor $UI.SysLabel   -NoNewline; Write-Host $Content -ForegroundColor $UI.SysText }
-        "ok"      { Write-Host "  ✓   " -ForegroundColor Green          -NoNewline; Write-Host $Content -ForegroundColor $UI.OkText }
-        "error"   { Write-Host "  ✗   " -ForegroundColor Red            -NoNewline; Write-Host $Content -ForegroundColor $UI.ErrText }
-        "warn"    { Write-Host "  ⚠   " -ForegroundColor Yellow         -NoNewline; Write-Host $Content -ForegroundColor $UI.WarnText }
-        "pending" { Write-Host "  ⏳  " -ForegroundColor Magenta        -NoNewline; Write-Host $Content -ForegroundColor $UI.PendText }
+        "system"  { Write-Host "  o   " -ForegroundColor $UI.SysLabel   -NoNewline; Write-Host $Content -ForegroundColor $UI.SysText }
+        "ok"      { Write-Host "  v   " -ForegroundColor Green          -NoNewline; Write-Host $Content -ForegroundColor $UI.OkText }
+        "error"   { Write-Host "  x   " -ForegroundColor Red            -NoNewline; Write-Host $Content -ForegroundColor $UI.ErrText }
+        "warn"    { Write-Host "  !   " -ForegroundColor Yellow         -NoNewline; Write-Host $Content -ForegroundColor $UI.WarnText }
+        "pending" { Write-Host "  ?   " -ForegroundColor Magenta        -NoNewline; Write-Host $Content -ForegroundColor $UI.PendText }
     }
 }
 
@@ -146,18 +168,18 @@ function Show-Banner {
     Write-Host ""
     Write-Host "${pad}╔══════════════════════════╗" -ForegroundColor Cyan
     Write-Host "${pad}║                          ║" -ForegroundColor Cyan
-    Write-Host "${pad}║    A  X  O  N   v1.0     ║" -ForegroundColor Cyan
+    Write-Host "${pad}║    A  X  O  N   v1.1     ║" -ForegroundColor Cyan
     Write-Host "${pad}║                          ║" -ForegroundColor Cyan
     Write-Host "${pad}╚══════════════════════════╝" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "${pad}  AI Agent Framework" -ForegroundColor DarkGray
+    Write-Host "${pad}  AI Agent Framework  —  Mega Phase B" -ForegroundColor DarkGray
     Write-Host "${pad}  Pure PowerShell. No dependencies." -ForegroundColor DarkGray
     Write-Host ""
     Start-Sleep -Milliseconds 1400
 }
 
 function Show-SlashHints {
-    $hints = @("/help","/settings","/profile","/history","/files","/sandbox","/brake","/exit")
+    $hints = @("/help","/status","/tasks","/pending","/settings","/profile","/history","/files","/sandbox","/brake","/exit")
     Write-Host ""
     Write-Host "  Commands: " -ForegroundColor $UI.DimText -NoNewline
     Write-Host ($hints -join "   ") -ForegroundColor $UI.CmdHint
@@ -186,24 +208,40 @@ function Initialize-DataFolder {
         }
     }
 
-    # Default settings
+    # Default settings — normalize missing keys on every load
     $settingsPath = "$DataFolder\settings.json"
-    if (-not (Test-Path $settingsPath)) {
-        @{
-            active_profile           = $null
-            script_name              = "AXON"
-            blocked_paths            = @(
-                "C:\Windows\System32",
-                "C:\Windows\SysWOW64",
-                "C:\Program Files",
-                "C:\Program Files (x86)"
-            )
-            user_blocked_paths       = @()
-            max_executions_per_minute = 5
-            dry_run_before_execute   = $true
-            auto_memory              = $true
-            streaming                = $false
-        } | ConvertTo-Json -Depth 5 | Set-Content -Path $settingsPath -Encoding UTF8
+    $defaults = [ordered]@{
+        active_profile            = $null
+        script_name               = "AXON"
+        blocked_paths             = @(
+            "C:\Windows\System32",
+            "C:\Windows\SysWOW64",
+            "C:\Program Files",
+            "C:\Program Files (x86)"
+        )
+        user_blocked_paths        = @()
+        max_executions_per_minute = 5
+        dry_run_before_execute    = $true
+        auto_memory               = $true
+        streaming                 = $false
+        approval_timeout_seconds  = 30
+    }
+
+    if (Test-Path $settingsPath) {
+        # Merge — add any keys that don't exist yet (forward-compat)
+        $existing = Get-Content $settingsPath -Raw | ConvertFrom-Json
+        $changed = $false
+        foreach ($key in $defaults.Keys) {
+            if ($null -eq $existing.$key) {
+                $existing | Add-Member -NotePropertyName $key -NotePropertyValue $defaults[$key] -Force
+                $changed = $true
+            }
+        }
+        if ($changed) {
+            Write-SettingsAtomic -Settings $existing
+        }
+    } else {
+        $defaults | ConvertTo-Json -Depth 5 | Set-Content -Path $settingsPath -Encoding UTF8
     }
 
     # Default memory
@@ -212,9 +250,23 @@ function Initialize-DataFolder {
         Set-Content -Path $memPath -Value "No previous memory." -Encoding UTF8
     }
 
-    # Session counter
-    $sessions = Get-ChildItem "$DataFolder\sessions" -Filter "*.log" -ErrorAction SilentlyContinue
+    # Session counter — count real session files (exclude current partial)
+    $sessions = Get-ChildItem "$DataFolder\sessions" -Filter "*.json" -ErrorAction SilentlyContinue
     $State.SessionNumber = ($sessions.Count) + 1
+}
+
+# ── Atomic write for settings — prevents corruption on crash ──
+function Write-SettingsAtomic {
+    param($Settings)
+    $sp  = "$DataFolder\settings.json"
+    $tmp = "$sp.tmp"
+    try {
+        $Settings | ConvertTo-Json -Depth 5 | Set-Content -Path $tmp -Encoding UTF8
+        Move-Item -Path $tmp -Destination $sp -Force
+    } catch {
+        # If move fails, fall back to direct write
+        $Settings | ConvertTo-Json -Depth 5 | Set-Content -Path $sp -Encoding UTF8
+    }
 }
 
 function Get-Settings {
@@ -227,56 +279,147 @@ function Write-ActionLog {
     param([string]$Entry)
     $logPath = "$DataFolder\logs\actions.log"
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    Add-Content -Path $logPath -Value "[$timestamp]  $Entry" -Encoding UTF8
+    try {
+        Add-Content -Path $logPath -Value "[$timestamp]  $Entry" -Encoding UTF8 -ErrorAction Stop
+    } catch {
+        # Retry once after brief delay if log is locked
+        Start-Sleep -Milliseconds 50
+        try { Add-Content -Path $logPath -Value "[$timestamp]  $Entry" -Encoding UTF8 } catch {}
+    }
 }
 
 
 # ================================================================
-#  COMMAND HANDLERS
+#  v1.1 — STARTUP HEALTH CHECK
+# ================================================================
+
+function Invoke-StartupHealthCheck {
+    $issues = [System.Collections.ArrayList]@()
+
+    # 1. Data folder writable?
+    try {
+        $testPath = "$DataFolder\_health_check_test_"
+        [System.IO.File]::WriteAllText($testPath, "ok")
+        Remove-Item $testPath -Force -ErrorAction SilentlyContinue
+    } catch {
+        $issues.Add("Data folder is not writable: $DataFolder") | Out-Null
+    }
+
+    # 2. Settings file readable?
+    $s = Get-Settings
+    if (-not $s) { $issues.Add("settings.json is missing or corrupt — defaults will be used.") | Out-Null }
+
+    # 3. Profile check
+    if ($State.ActiveProfile) {
+        if ([string]::IsNullOrWhiteSpace($State.ActiveProfile.api_key) -and
+            $State.ActiveProfile.provider -ne "ollama") {
+            $issues.Add("Active profile '$($State.ActiveProfile.profile_name)' has no API key set.") | Out-Null
+        }
+        if ([string]::IsNullOrWhiteSpace($State.ActiveProfile.api_url)) {
+            $issues.Add("Active profile '$($State.ActiveProfile.profile_name)' has no API URL set.") | Out-Null
+        }
+    }
+
+    # 4. PowerShell version
+    if ($PSVersionTable.PSVersion.Major -lt 5) {
+        $issues.Add("PowerShell 5.1+ recommended. Current: $($PSVersionTable.PSVersion)") | Out-Null
+    }
+
+    # 5. Stale temp files warning
+    $tempPath = "$DataFolder\temp"
+    $staleTemp = Get-ChildItem $tempPath -File -ErrorAction SilentlyContinue |
+                 Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-7) }
+    if ($staleTemp -and $staleTemp.Count -gt 0) {
+        $issues.Add("$($staleTemp.Count) stale file(s) in temp/ (>7 days). Use /temp clean to remove.") | Out-Null
+    }
+
+    if ($issues.Count -gt 0) {
+        Write-Host ""
+        Write-Host "  Health Check Warnings:" -ForegroundColor Yellow
+        foreach ($issue in $issues) {
+            Write-Host "    ! $issue" -ForegroundColor Yellow
+        }
+        Write-ActionLog "HEALTH CHECK — $($issues.Count) warning(s): $($issues -join '; ')"
+    } else {
+        Write-ActionLog "HEALTH CHECK — OK"
+    }
+
+    return $issues
+}
+
+
+# ================================================================
+#  COMMAND HANDLERS — HELP
 # ================================================================
 
 function Invoke-HelpCommand {
     Write-Host ""
     Write-ThinDivider
-    Write-Host "   $AXON_NAME  —  Command Reference" -ForegroundColor $UI.Header
+    Write-Host "   $AXON_NAME  v$AXON_VERSION  —  Command Reference" -ForegroundColor $UI.Header
     Write-ThinDivider
 
     $sections = [ordered]@{
         "NAVIGATION" = @(
-            @{cmd="/help";           desc="Show this command reference"},
-            @{cmd="/clear";          desc="Clear the chat display (context preserved)"},
-            @{cmd="/exit";           desc="Close AXON cleanly"}
+            @{cmd="/help";               desc="Show this command reference"},
+            @{cmd="/clear";              desc="Clear the chat display (context preserved)"},
+            @{cmd="/exit";               desc="Close AXON cleanly"}
         )
         "AI & PROFILES" = @(
-            @{cmd="/profile";        desc="View or switch active profile"},
-            @{cmd="/profile new";    desc="Create a new AI provider profile"},
-            @{cmd="/profile delete"; desc="Remove a profile"},
-            @{cmd="/reload";         desc="Resend system prompt to AI (fresh brain)"},
-            @{cmd="/inject [text]";  desc="Add hidden context to the next AI message"}
+            @{cmd="/profile";            desc="View or switch active profile"},
+            @{cmd="/profile new";        desc="Create a new AI provider profile"},
+            @{cmd="/profile delete";     desc="Remove a profile"},
+            @{cmd="/profile test";       desc="Send a test ping to verify the active profile works"},
+            @{cmd="/profile clone [n]";  desc="Duplicate a profile under a new name"},
+            @{cmd="/profile doctor";     desc="Diagnose the active profile for config issues"},
+            @{cmd="/reload";             desc="Resend system prompt to AI (fresh brain)"},
+            @{cmd="/inject [text]";      desc="Add hidden context to the next AI message"}
         )
-        "SESSION" = @(
-            @{cmd="/history";        desc="Browse past sessions"},
-            @{cmd="/log";            desc="View this session's action log"},
-            @{cmd="/memory";         desc="View the AI's memory from last session"},
-            @{cmd="/macro";          desc="List saved macros  (/macro list / delete [name])"}
+        "SESSION STATUS" = @(
+            @{cmd="/status";             desc="Show current session status dashboard"},
+            @{cmd="/last";               desc="Show the last AI reply again"},
+            @{cmd="/recent";             desc="Show the last 5 turns of this session"},
+            @{cmd="/context";            desc="Show what is in the AI context window right now"},
+            @{cmd="/retry";              desc="Retry the last user message (re-sends to AI)"},
+            @{cmd="/fixlast";            desc="Ask the AI to improve its last response"}
+        )
+        "TASKS" = @(
+            @{cmd="/tasks";              desc="Show the multi-step task tracker"},
+            @{cmd="/tasks clear";        desc="Clear all tasks from the tracker"}
+        )
+        "APPROVAL QUEUE" = @(
+            @{cmd="/pending";            desc="Review all queued deferred actions"},
+            @{cmd="/approve";            desc="Approve the next pending action"},
+            @{cmd="/deny";               desc="Deny and discard the next pending action"},
+            @{cmd="/approve all";        desc="Approve all pending actions at once"},
+            @{cmd="/deny all";           desc="Deny and discard all pending actions"}
+        )
+        "SESSION & HISTORY" = @(
+            @{cmd="/history";            desc="Browse past sessions"},
+            @{cmd="/history search [q]"; desc="Search past session transcripts for a keyword"},
+            @{cmd="/history resume [n]"; desc="Load a past session's context and continue"},
+            @{cmd="/history export [n]"; desc="Export session to a readable .txt file"},
+            @{cmd="/log";                desc="View this session's action log"},
+            @{cmd="/memory";             desc="View the AI's memory from last session"},
+            @{cmd="/macro";              desc="List saved macros  (/macro list / delete [name])"}
         )
         "FILES & EXECUTION" = @(
-            @{cmd="/files";          desc="Browse Data folder contents"},
-            @{cmd="/peek [path]";    desc="Preview a file before AI touches it"},
-            @{cmd="/exec";           desc="Re-run the last code block"},
-            @{cmd="/approve";        desc="Approve last pending action"},
-            @{cmd="/deny";           desc="Reject last pending action"},
-            @{cmd="/undo";           desc="Attempt to reverse last action"},
-            @{cmd="/temp";           desc="Show files waiting in temp/ for approval"}
+            @{cmd="/files";              desc="Browse Data folder contents"},
+            @{cmd="/open [path]";        desc="Open a file or URL from the command line"},
+            @{cmd="/peek [path]";        desc="Preview a file (first 50 lines, size, modified)"},
+            @{cmd="/exec";               desc="Re-run the last code block"},
+            @{cmd="/undo";               desc="Attempt to reverse last action"},
+            @{cmd="/temp";               desc="Show files in temp/ awaiting approval"},
+            @{cmd="/temp clean";         desc="Delete all files from the temp/ folder now"},
+            @{cmd="/logs clean";         desc="Archive and rotate the action log"}
         )
         "SAFETY" = @(
-            @{cmd="/sandbox";        desc="Toggle sandbox mode — simulates everything, runs nothing"},
-            @{cmd="/lock [path]";    desc="Add a path to your personal blocklist"},
-            @{cmd="/unlock [path]";  desc="Remove a path from your blocklist"},
-            @{cmd="/brake";          desc="!! EMERGENCY STOP — halts all running jobs immediately !!"}
+            @{cmd="/sandbox";            desc="Toggle sandbox mode — simulates everything, runs nothing"},
+            @{cmd="/lock [path]";        desc="Add a path to your personal blocklist"},
+            @{cmd="/unlock [path]";      desc="Remove a path from your blocklist"},
+            @{cmd="/brake";              desc="!! EMERGENCY STOP — halts all running jobs immediately !!"}
         )
         "SETTINGS" = @(
-            @{cmd="/settings";       desc="Open the settings menu"}
+            @{cmd="/settings";           desc="Open the settings menu"}
         )
     }
 
@@ -284,7 +427,7 @@ function Invoke-HelpCommand {
         Write-Host ""
         Write-Host "   $section" -ForegroundColor $UI.DimText
         foreach ($item in $sections[$section]) {
-            Write-Host ("   {0,-28} {1}" -f $item.cmd, $item.desc) -ForegroundColor $UI.BodyText
+            Write-Host ("   {0,-32} {1}" -f $item.cmd, $item.desc) -ForegroundColor $UI.BodyText
         }
     }
 
@@ -303,16 +446,9 @@ function Invoke-ExitCommand {
     Write-Host "  Shutting down AXON..." -ForegroundColor $UI.DimText
     Write-ActionLog "SESSION ENDED — Session #$($State.SessionNumber)"
 
-    # Auto-memory: ask the AI to summarize the session for next time
     Invoke-AutoMemory
-
-    # Persist the session log one final time with ended_at + final counts
     Save-SessionLog
-
-    # Clean up old temp files (>7 days)
     Clear-TempFolder
-
-    # Show session stats before closing
     Show-SessionStats
 
     Write-Host ""
@@ -339,27 +475,407 @@ function Invoke-BrakeCommand {
 
     $State.PendingAction = $null
     $State.LastCodeBlock = $null
+    $State.ApprovalQueue.Clear()
 
     try {
         Get-Job | Stop-Job  -ErrorAction SilentlyContinue
         Get-Job | Remove-Job -ErrorAction SilentlyContinue
     } catch {}
 
-    Write-Msg -Role "system" -Content "All jobs stopped. Pending actions cleared. System is idle."
+    Write-Msg -Role "system" -Content "All jobs stopped. Pending actions and approval queue cleared. System is idle."
     Write-ActionLog "!! EMERGENCY BRAKE ACTIVATED !!"
 }
+
+
+# ================================================================
+#  v1.1 — STATUS DASHBOARD
+# ================================================================
+
+function Invoke-StatusCommand {
+    $duration = [Math]::Round(((Get-Date) - $State.SessionStart).TotalMinutes, 1)
+    $profile  = if ($State.ActiveProfile) { "$($State.ActiveProfile.profile_name)  ($($State.ActiveProfile.provider) / $($State.ActiveProfile.model))" } else { "No profile loaded" }
+
+    Write-Host ""
+    Write-ThinDivider
+    Write-Host "   AXON v$AXON_VERSION — Session Status" -ForegroundColor $UI.Header
+    Write-ThinDivider
+    Write-Host ("   {0,-28} {1}" -f "Session #:",      $State.SessionNumber)           -ForegroundColor $UI.BodyText
+    Write-Host ("   {0,-28} {1}" -f "Profile:",        $profile)                       -ForegroundColor $UI.BodyText
+    Write-Host ("   {0,-28} {1}" -f "Duration:",       "$duration min")                -ForegroundColor $UI.BodyText
+    Write-Host ("   {0,-28} {1}" -f "AI calls:",       $State.AICallCount)             -ForegroundColor $UI.BodyText
+    Write-Host ("   {0,-28} {1}" -f "Code executions:", $State.ExecutionCount)         -ForegroundColor $UI.BodyText
+    Write-Host ("   {0,-28} {1}" -f "Chat turns:",     $State.ChatHistory.Count)       -ForegroundColor $UI.BodyText
+    Write-Host ("   {0,-28} {1}" -f "Context tokens:", "~$($State.TokenEstimate)")     -ForegroundColor $UI.BodyText
+    Write-Host ("   {0,-28} {1}" -f "Sandbox mode:",   $State.SandboxMode)             -ForegroundColor $(if ($State.SandboxMode) { "Yellow" } else { $UI.BodyText })
+    Write-Host ("   {0,-28} {1}" -f "Pending actions:", $State.ApprovalQueue.Count)    -ForegroundColor $(if ($State.ApprovalQueue.Count -gt 0) { "Magenta" } else { $UI.BodyText })
+    Write-Host ("   {0,-28} {1}" -f "Tasks:",          "$( ($State.Tasks | Where-Object {$_.status -eq 'done'}).Count )/$($State.Tasks.Count) done") -ForegroundColor $UI.BodyText
+    Write-Host ("   {0,-28} {1}" -f "Loaded plugins:", $State.LoadedPlugins.Count)     -ForegroundColor $UI.BodyText
+    Write-Host ("   {0,-28} {1}" -f "Undo stack:",     "$($State.UndoStack.Count) entries") -ForegroundColor $UI.BodyText
+    if ($State.StatusBarMsg) {
+        Write-Host ""
+        Write-Host ("   Status bar: $($State.StatusBarMsg)") -ForegroundColor $UI.SysText
+    }
+    if ($State.LastAPIError) {
+        Write-Host ""
+        Write-Host ("   Last API error: $($State.LastAPIError)") -ForegroundColor $UI.ErrText
+    }
+    Write-ThinDivider
+    Write-Host "   /recent  → last 5 turns  |  /context → context window  |  /tasks → task list" -ForegroundColor $UI.DimText
+    Write-ThinDivider
+}
+
+
+# ================================================================
+#  v1.1 — LAST / RECENT / CONTEXT / RETRY / FIXLAST
+# ================================================================
+
+function Invoke-LastCommand {
+    if ([string]::IsNullOrWhiteSpace($State.LastAIReply)) {
+        Write-Msg -Role "system" -Content "No AI reply yet this session."
+        return
+    }
+    Write-Host ""
+    Write-ThinDivider
+    Write-Host "   Last AI Reply" -ForegroundColor $UI.Header
+    Write-ThinDivider
+    Write-Host ""
+    Write-AIResponse -Text $State.LastAIReply
+    Write-Host ""
+    Write-ThinDivider
+}
+
+function Invoke-RecentCommand {
+    $turns = $State.ChatHistory | Where-Object {
+        $_.content -notlike "[AXON*" -and $_.content -notlike "[CONTEXT*"
+    } | Select-Object -Last 10
+
+    if (-not $turns -or @($turns).Count -eq 0) {
+        Write-Msg -Role "system" -Content "No turns this session."
+        return
+    }
+
+    Write-Host ""
+    Write-ThinDivider
+    Write-Host "   Recent Turns (last 5 exchanges)" -ForegroundColor $UI.Header
+    Write-ThinDivider
+
+    foreach ($t in $turns) {
+        Write-Host ""
+        if ($t.role -eq "user") {
+            Write-Host "  You : " -ForegroundColor $UI.UserLabel -NoNewline
+            $preview = if ($t.content.Length -gt 120) { $t.content.Substring(0,120) + "..." } else { $t.content }
+            Write-Host $preview -ForegroundColor White
+        } else {
+            Write-Host "  AI  : " -ForegroundColor $UI.AILabel -NoNewline
+            $preview = if ($t.content.Length -gt 160) { $t.content.Substring(0,160) + "..." } else { $t.content }
+            Write-Host $preview -ForegroundColor $UI.BodyText
+        }
+    }
+
+    Write-Host ""
+    Write-ThinDivider
+}
+
+function Invoke-ContextCommand {
+    Write-Host ""
+    Write-ThinDivider
+    Write-Host "   Context Window  (~$($State.TokenEstimate) tokens  /  $($State.ChatHistory.Count) messages)" -ForegroundColor $UI.Header
+    Write-ThinDivider
+
+    if ($State.ChatHistory.Count -eq 0) {
+        Write-Host "   Context is empty." -ForegroundColor $UI.DimText
+        Write-ThinDivider; return
+    }
+
+    $i = 1
+    foreach ($msg in $State.ChatHistory) {
+        $role = $msg.role.PadRight(9)
+        $preview = if ($msg.content.Length -gt 100) { $msg.content.Substring(0,100) + "..." } else { $msg.content }
+        $color   = if ($msg.role -eq "user") { $UI.UserLabel } elseif ($msg.role -eq "assistant") { $UI.AILabel } else { $UI.DimText }
+        Write-Host ("   [{0,2}] {1}: {2}" -f $i, $role, $preview) -ForegroundColor $color
+        $i++
+    }
+
+    Write-Host ""
+    Write-ThinDivider
+    Write-Host "   Tip: /reload clears this and gives the AI a fresh start." -ForegroundColor $UI.DimText
+    Write-ThinDivider
+}
+
+function Invoke-RetryCommand {
+    if ([string]::IsNullOrWhiteSpace($State.LastUserInput)) {
+        Write-Msg -Role "system" -Content "No previous message to retry."
+        return
+    }
+
+    Write-Msg -Role "system" -Content "Retrying last message: '$($State.LastUserInput)'"
+
+    # Remove the last user + assistant pair from history so we don't duplicate
+    $history = $State.ChatHistory
+    $lastUser = -1
+    for ($i = $history.Count - 1; $i -ge 0; $i--) {
+        if ($history[$i].role -eq "user" -and $history[$i].content -eq $State.LastUserInput) {
+            $lastUser = $i
+            break
+        }
+    }
+    if ($lastUser -ge 0) {
+        # Remove user message and any assistant reply after it
+        while ($history.Count -gt $lastUser) { $history.RemoveAt($lastUser) }
+    }
+
+    # Re-inject and call AI
+    return $State.LastUserInput
+}
+
+function Invoke-FixLastCommand {
+    if ([string]::IsNullOrWhiteSpace($State.LastAIReply)) {
+        Write-Msg -Role "system" -Content "No AI reply to fix yet."
+        return
+    }
+
+    Write-Msg -Role "system" -Content "Asking AI to improve its last response..."
+    return "[AXON /fixlast] Please review your previous response and improve it — be more detailed, clear, and accurate. Provide the improved version now."
+}
+
+
+# ================================================================
+#  v1.1 — MULTI-STEP TASK TRACKER
+# ================================================================
+
+function Invoke-TasksCommand {
+    param([string]$Sub = "")
+
+    if ($Sub -eq "clear") {
+        $State.Tasks.Clear()
+        Write-Msg -Role "ok" -Content "Task list cleared."
+        Write-ActionLog "Tasks cleared by user"
+        return
+    }
+
+    Write-Host ""
+    Write-ThinDivider
+    Write-Host "   Multi-Step Task Tracker" -ForegroundColor $UI.Header
+    Write-ThinDivider
+
+    if ($State.Tasks.Count -eq 0) {
+        Write-Host "   No tasks yet. The AI can create tasks using the " -ForegroundColor $UI.DimText -NoNewline
+        Write-Host '$TASK$...$ENDTASK$' -ForegroundColor Cyan -NoNewline
+        Write-Host " tag." -ForegroundColor $UI.DimText
+        Write-ThinDivider; return
+    }
+
+    $done  = ($State.Tasks | Where-Object { $_.status -eq "done"     }).Count
+    $inprog= ($State.Tasks | Where-Object { $_.status -eq "active"   }).Count
+    $wait  = ($State.Tasks | Where-Object { $_.status -eq "waiting"  }).Count
+
+    Write-Host ("   {0}/{1} done   {2} active   {3} waiting" -f $done, $State.Tasks.Count, $inprog, $wait) -ForegroundColor $UI.SysText
+    Write-Host ""
+
+    $i = 1
+    foreach ($task in $State.Tasks) {
+        $icon  = switch ($task.status) {
+            "done"    { "[v]" }
+            "active"  { "[>]" }
+            "waiting" { "[ ]" }
+            default   { "[ ]" }
+        }
+        $color = switch ($task.status) {
+            "done"    { $UI.TaskDone }
+            "active"  { $UI.TaskPend }
+            "waiting" { $UI.TaskWait }
+            default   { $UI.BodyText }
+        }
+        $note = if ($task.note) { "  — $($task.note)" } else { "" }
+        Write-Host ("   {0} {1,2}. {2}{3}" -f $icon, $i, $task.title, $note) -ForegroundColor $color
+        $i++
+    }
+
+    Write-Host ""
+    Write-ThinDivider
+    Write-Host "   /tasks clear  → remove all tasks" -ForegroundColor $UI.DimText
+    Write-ThinDivider
+}
+
+function Add-Task {
+    param([string]$Title, [string]$Note = "", [string]$Status = "waiting")
+    $State.Tasks.Add([ordered]@{
+        id     = [guid]::NewGuid().ToString("N").Substring(0,8)
+        title  = $Title
+        note   = $Note
+        status = $Status
+        added  = (Get-Date -Format "HH:mm:ss")
+    }) | Out-Null
+    Write-ActionLog "TASK ADDED: $Title [$Status]"
+}
+
+function Set-TaskStatus {
+    param([string]$TitleOrId, [string]$Status)
+    foreach ($t in $State.Tasks) {
+        if ($t.title -like "*$TitleOrId*" -or $t.id -eq $TitleOrId) {
+            $t.status = $Status
+            Write-ActionLog "TASK STATUS: '$($t.title)' -> $Status"
+            return $true
+        }
+    }
+    return $false
+}
+
+
+# ================================================================
+#  v1.1 — DEFERRED APPROVAL QUEUE
+# ================================================================
+
+function Add-ApprovalItem {
+    param([string]$Type, [string]$Description, [scriptblock]$Action)
+    $item = [ordered]@{
+        id          = [guid]::NewGuid().ToString("N").Substring(0,8)
+        type        = $Type
+        description = $Description
+        action      = $Action
+        added_at    = (Get-Date -Format "HH:mm:ss")
+    }
+    $State.ApprovalQueue.Add($item) | Out-Null
+    Write-Msg -Role "pending" -Content "Queued for approval: [$Type] $Description  (use /pending to review)"
+    Write-ActionLog "APPROVAL QUEUED: [$Type] $Description"
+}
+
+function Invoke-PendingCommand {
+    param([string]$Sub = "")
+
+    if ($Sub -eq "all" -or $Sub -eq "approve all") { Invoke-ApproveAllCommand; return }
+    if ($Sub -eq "deny all")                        { Invoke-DenyAllCommand;    return }
+
+    Write-Host ""
+    Write-ThinDivider
+    Write-Host "   Pending Approval Queue  ($($State.ApprovalQueue.Count) items)" -ForegroundColor $UI.Header
+    Write-ThinDivider
+
+    if ($State.ApprovalQueue.Count -eq 0) {
+        Write-Host "   Nothing pending." -ForegroundColor $UI.DimText
+        Write-ThinDivider; return
+    }
+
+    $i = 1
+    foreach ($item in $State.ApprovalQueue) {
+        Write-Host ("   [{0}] {1,-10} {2}  (added {3})" -f $i, "[$($item.type)]", $item.description, $item.added_at) -ForegroundColor $UI.PendText
+        $i++
+    }
+
+    Write-Host ""
+    Write-ThinDivider
+    Write-Host "   /approve      → approve next item (executes it)" -ForegroundColor $UI.DimText
+    Write-Host "   /deny         → deny and discard next item" -ForegroundColor $UI.DimText
+    Write-Host "   /approve all  → approve everything" -ForegroundColor $UI.DimText
+    Write-Host "   /deny all     → discard everything" -ForegroundColor $UI.DimText
+    Write-ThinDivider
+}
+
+function Invoke-ApproveCommand {
+    if ($State.ApprovalQueue.Count -eq 0) {
+        Write-Msg -Role "system" -Content "No pending actions. Approvals happen inline when the AI requests them."
+        return
+    }
+
+    $item = $State.ApprovalQueue[0]
+    $State.ApprovalQueue.RemoveAt(0)
+
+    Write-Msg -Role "system" -Content "Executing: [$($item.type)] $($item.description)"
+    try {
+        $result = & $item.action
+        Write-Msg -Role "ok" -Content "Done: $($item.description)"
+        Write-ActionLog "APPROVAL EXECUTED: [$($item.type)] $($item.description)"
+        if ($result) {
+            $State.ChatHistory.Add(@{
+                role    = "user"
+                content = "[AXON DEFERRED EXECUTION FEEDBACK]`n[$($item.type)] $($item.description)`nResult: $result"
+            }) | Out-Null
+            $State.ChatHistory.Add(@{
+                role    = "assistant"
+                content = "Understood. Deferred action executed successfully."
+            }) | Out-Null
+        }
+    } catch {
+        Write-Msg -Role "error" -Content "Execution failed: $($_.Exception.Message)"
+        Write-ActionLog "APPROVAL EXEC FAILED: [$($item.type)] $($_.Exception.Message)"
+    }
+}
+
+function Invoke-DenyCommand {
+    if ($State.ApprovalQueue.Count -eq 0) {
+        Write-Msg -Role "system" -Content "No pending action to deny."
+        return
+    }
+    $item = $State.ApprovalQueue[0]
+    $State.ApprovalQueue.RemoveAt(0)
+    Write-Msg -Role "ok" -Content "Denied and discarded: $($item.description)"
+    Write-ActionLog "APPROVAL DENIED: [$($item.type)] $($item.description)"
+}
+
+function Invoke-ApproveAllCommand {
+    if ($State.ApprovalQueue.Count -eq 0) {
+        Write-Msg -Role "system" -Content "Nothing to approve."
+        return
+    }
+    $count = $State.ApprovalQueue.Count
+    Write-Host ""
+    Write-Host "  Approve all $count pending action(s)? (y/n): " -ForegroundColor $UI.WarnText -NoNewline
+    if ((Read-Host).Trim().ToLower() -notin @("y","yes")) {
+        Write-Msg -Role "system" -Content "Cancelled."
+        return
+    }
+
+    $items = @($State.ApprovalQueue)  # snapshot
+    $State.ApprovalQueue.Clear()
+
+    foreach ($item in $items) {
+        Write-Msg -Role "system" -Content "Executing: [$($item.type)] $($item.description)"
+        try {
+            & $item.action | Out-Null
+            Write-Msg -Role "ok" -Content "Done: $($item.description)"
+            Write-ActionLog "APPROVE ALL EXECUTED: [$($item.type)] $($item.description)"
+        } catch {
+            Write-Msg -Role "error" -Content "Failed: $($item.description) — $($_.Exception.Message)"
+        }
+    }
+    Write-Msg -Role "ok" -Content "All $count action(s) processed."
+}
+
+function Invoke-DenyAllCommand {
+    if ($State.ApprovalQueue.Count -eq 0) {
+        Write-Msg -Role "system" -Content "Nothing to deny."
+        return
+    }
+    $count = $State.ApprovalQueue.Count
+    $State.ApprovalQueue.Clear()
+    Write-Msg -Role "ok" -Content "All $count pending action(s) denied and discarded."
+    Write-ActionLog "DENY ALL — $count items discarded"
+}
+
+
+# ================================================================
+#  PROFILE COMMANDS — VIEW / SWITCH / NEW / DELETE
+# ================================================================
 
 function Invoke-ProfileCommand {
     param([string]$Sub = "")
 
-    switch ($Sub.Trim().ToLower()) {
+    switch -Regex ($Sub.Trim().ToLower()) {
 
-        "new" { New-Profile }
+        '^new$'         { New-Profile }
 
-        "delete" { Remove-Profile }
+        '^delete$'      { Remove-Profile }
+
+        '^test$'        { Invoke-ProfileTest }
+
+        '^doctor$'      { Invoke-ProfileDoctor }
+
+        '^clone(\s+.+)?$' {
+            $targetName = ($Sub -replace '^clone\s*', '').Trim()
+            Invoke-ProfileClone -SourceName $targetName
+        }
 
         default {
-            # If sub is a profile name, switch to it
             if ($Sub -ne "") {
                 Switch-Profile -Name $Sub
                 return
@@ -381,18 +897,165 @@ function Invoke-ProfileCommand {
                 foreach ($pf in $profiles) {
                     $d      = Get-Content $pf.FullName -Raw | ConvertFrom-Json
                     $active = if ($State.ActiveProfile -and
-                                  $State.ActiveProfile.profile_name -eq $d.profile_name) { "  ◄ active" } else { "" }
+                                  $State.ActiveProfile.profile_name -eq $d.profile_name) { "  < active" } else { "" }
                     Write-Host ("   [{0}] {1,-24} {2} / {3}{4}" -f $i, $d.profile_name, $d.provider, $d.model, $active) -ForegroundColor $UI.BodyText
                     $i++
                 }
                 Write-Host ""
-                Write-Host "   /profile [name]    → switch to a profile" -ForegroundColor $UI.DimText
-                Write-Host "   /profile new       → create a new profile" -ForegroundColor $UI.DimText
-                Write-Host "   /profile delete    → remove a profile" -ForegroundColor $UI.DimText
+                Write-Host "   /profile [name]    -> switch" -ForegroundColor $UI.DimText
+                Write-Host "   /profile new       -> create"  -ForegroundColor $UI.DimText
+                Write-Host "   /profile delete    -> remove"  -ForegroundColor $UI.DimText
+                Write-Host "   /profile test      -> ping AI" -ForegroundColor $UI.DimText
+                Write-Host "   /profile clone     -> duplicate" -ForegroundColor $UI.DimText
+                Write-Host "   /profile doctor    -> diagnose" -ForegroundColor $UI.DimText
             }
             Write-ThinDivider
         }
     }
+}
+
+# ── v1.1: Profile Test ──
+function Invoke-ProfileTest {
+    if (-not $State.ActiveProfile) {
+        Write-Msg -Role "error" -Content "No active profile to test. Use /profile new."
+        return
+    }
+
+    $p = $State.ActiveProfile
+    Write-Msg -Role "system" -Content "Testing profile '$($p.profile_name)'  ($($p.provider) / $($p.model))..."
+
+    $testHistory = [System.Collections.ArrayList]@(@{ role = "user"; content = 'Say exactly: "AXON TEST OK"' })
+    $sp = "You are a test responder. Reply only with the exact text requested."
+
+    $reply = Invoke-AICall -UserMessage 'Say exactly: "AXON TEST OK"' -SystemPrompt $sp -History $testHistory
+
+    if ($reply -and $reply -match "AXON TEST OK") {
+        Write-Msg -Role "ok" -Content "Profile test PASSED — API is responding correctly."
+        Write-ActionLog "PROFILE TEST PASSED: $($p.profile_name)"
+    } elseif ($reply) {
+        Write-Msg -Role "warn" -Content "Profile test PARTIAL — API responded but not exactly. Reply: $($reply.Substring(0,[Math]::Min(80,$reply.Length)))"
+        Write-ActionLog "PROFILE TEST PARTIAL: $($p.profile_name)"
+    } else {
+        Write-Msg -Role "error" -Content "Profile test FAILED — no response from API. Check your API key and URL."
+        Write-ActionLog "PROFILE TEST FAILED: $($p.profile_name)"
+    }
+}
+
+# ── v1.1: Profile Doctor ──
+function Invoke-ProfileDoctor {
+    if (-not $State.ActiveProfile) {
+        Write-Msg -Role "error" -Content "No active profile. Use /profile new."
+        return
+    }
+
+    $p      = $State.ActiveProfile
+    $issues = [System.Collections.ArrayList]@()
+    $ok     = [System.Collections.ArrayList]@()
+
+    if ([string]::IsNullOrWhiteSpace($p.profile_name)) { $issues.Add("profile_name is empty") | Out-Null }
+    else { $ok.Add("profile_name: $($p.profile_name)") | Out-Null }
+
+    if ([string]::IsNullOrWhiteSpace($p.provider))     { $issues.Add("provider is not set") | Out-Null }
+    else { $ok.Add("provider: $($p.provider)") | Out-Null }
+
+    if ([string]::IsNullOrWhiteSpace($p.model))        { $issues.Add("model is not set") | Out-Null }
+    else { $ok.Add("model: $($p.model)") | Out-Null }
+
+    if ([string]::IsNullOrWhiteSpace($p.api_url))      { $issues.Add("api_url is empty") | Out-Null }
+    else { $ok.Add("api_url: $($p.api_url)") | Out-Null }
+
+    if ($p.provider -ne "ollama" -and [string]::IsNullOrWhiteSpace($p.api_key)) {
+        $issues.Add("api_key is not set (required for $($p.provider))") | Out-Null
+    } elseif ($p.provider -ne "ollama") {
+        $ok.Add("api_key: set ($($p.api_key.Length) chars)") | Out-Null
+    }
+
+    $maxT = $p.max_tokens
+    if (-not $maxT -or $maxT -lt 100 -or $maxT -gt 200000) {
+        $issues.Add("max_tokens '$maxT' looks unusual (expected 256-128000)") | Out-Null
+    } else { $ok.Add("max_tokens: $maxT") | Out-Null }
+
+    $temp = $p.temperature
+    if ($temp -lt 0 -or $temp -gt 2) {
+        $issues.Add("temperature '$temp' out of range (0.0 - 2.0)") | Out-Null
+    } else { $ok.Add("temperature: $temp") | Out-Null }
+
+    Write-Host ""
+    Write-ThinDivider
+    Write-Host "   Profile Doctor — $($p.profile_name)" -ForegroundColor $UI.Header
+    Write-ThinDivider
+
+    foreach ($line in $ok)     { Write-Host "   [OK] $line" -ForegroundColor $UI.OkText }
+    foreach ($issue in $issues){ Write-Host "   [!!] $issue" -ForegroundColor $UI.ErrText }
+
+    Write-Host ""
+    if ($issues.Count -eq 0) {
+        Write-Msg -Role "ok" -Content "Profile looks healthy! Use /profile test to verify API connectivity."
+    } else {
+        Write-Msg -Role "warn" -Content "$($issues.Count) issue(s) found. Delete and recreate with /profile delete + /profile new."
+    }
+    Write-ThinDivider
+    Write-ActionLog "PROFILE DOCTOR: $($p.profile_name) — $($issues.Count) issue(s)"
+}
+
+# ── v1.1: Profile Clone ──
+function Invoke-ProfileClone {
+    param([string]$SourceName = "")
+
+    $profilesDir = "$DataFolder\profiles"
+    $profiles    = Get-ChildItem $profilesDir -Filter "*.json" -ErrorAction SilentlyContinue
+
+    if (-not $profiles -or $profiles.Count -eq 0) {
+        Write-Msg -Role "error" -Content "No profiles to clone."
+        return
+    }
+
+    # Pick source
+    $sourceFile = $null
+    if ($SourceName) {
+        $sourceFile = $profiles | Where-Object {
+            ($_ | Get-Content -Raw | ConvertFrom-Json).profile_name -like "*$SourceName*"
+        } | Select-Object -First 1
+    } else {
+        # Default: clone active profile
+        if ($State.ActiveProfile) {
+            $sourceFile = $profiles | Where-Object {
+                ($_ | Get-Content -Raw | ConvertFrom-Json).profile_name -eq $State.ActiveProfile.profile_name
+            } | Select-Object -First 1
+        }
+    }
+
+    if (-not $sourceFile) {
+        Write-Msg -Role "error" -Content "Source profile not found. Specify a name: /profile clone [name]"
+        return
+    }
+
+    $sourceData = Get-Content $sourceFile.FullName -Raw | ConvertFrom-Json
+
+    Write-Host ""
+    Write-Host "  New profile name for the clone: " -ForegroundColor $UI.BodyText -NoNewline
+    $newName = (Read-Host).Trim()
+    if ([string]::IsNullOrWhiteSpace($newName)) { Write-Msg -Role "error" -Content "Name cannot be empty."; return }
+
+    $safeName = $newName -replace '[\\/:*?"<>|]','_'
+    $destPath = "$profilesDir\$safeName.json"
+    if (Test-Path $destPath) { Write-Msg -Role "error" -Content "A profile with that name already exists."; return }
+
+    $clone = [ordered]@{
+        profile_name         = $newName
+        provider             = $sourceData.provider
+        model                = $sourceData.model
+        api_key              = $sourceData.api_key
+        api_url              = $sourceData.api_url
+        max_tokens           = $sourceData.max_tokens
+        temperature          = $sourceData.temperature
+        created_at           = (Get-Date -Format "yyyy-MM-dd")
+        custom_system_addons = $sourceData.custom_system_addons
+    }
+
+    $clone | ConvertTo-Json -Depth 5 | Set-Content -Path $destPath -Encoding UTF8
+    Write-Msg -Role "ok" -Content "Profile '$($sourceData.profile_name)' cloned as '$newName'."
+    Write-ActionLog "PROFILE CLONED: $($sourceData.profile_name) -> $newName"
 }
 
 function New-Profile {
@@ -402,7 +1065,6 @@ function New-Profile {
     Write-ThinDivider
     Write-Host ""
 
-    # Profile name
     Write-Host "   Profile name (e.g. Claude Work): " -ForegroundColor $UI.BodyText -NoNewline
     $profileName = (Read-Host).Trim()
     if ([string]::IsNullOrWhiteSpace($profileName)) {
@@ -410,7 +1072,6 @@ function New-Profile {
         return
     }
 
-    # Sanitize for filename
     $safeFileName = ($profileName -replace '[\\/:*?"<>|]', '_')
     $profilePath  = "$DataFolder\profiles\$safeFileName.json"
     if (Test-Path $profilePath) {
@@ -418,7 +1079,6 @@ function New-Profile {
         return
     }
 
-    # Provider selection
     Write-Host ""
     Write-Host "   Select provider:" -ForegroundColor $UI.BodyText
     Write-Host "   [1] Anthropic (Claude)" -ForegroundColor $UI.DimText
@@ -431,11 +1091,11 @@ function New-Profile {
     $provChoice = (Read-Host).Trim()
 
     $providerMap = @{
-        "1" = @{ name="anthropic"; url="https://api.anthropic.com/v1/messages";    defaultModel="claude-sonnet-4-20250514" }
-        "2" = @{ name="openai";    url="https://api.openai.com/v1/chat/completions"; defaultModel="gpt-4o" }
+        "1" = @{ name="anthropic"; url="https://api.anthropic.com/v1/messages";         defaultModel="claude-sonnet-4-20250514" }
+        "2" = @{ name="openai";    url="https://api.openai.com/v1/chat/completions";     defaultModel="gpt-4o" }
         "3" = @{ name="groq";      url="https://api.groq.com/openai/v1/chat/completions"; defaultModel="llama-3.3-70b-versatile" }
-        "4" = @{ name="ollama";    url="http://localhost:11434/api/chat";           defaultModel="llama3" }
-        "5" = @{ name="custom";    url="";                                          defaultModel="" }
+        "4" = @{ name="ollama";    url="http://localhost:11434/api/chat";                defaultModel="llama3" }
+        "5" = @{ name="custom";    url="";                                               defaultModel="" }
     }
 
     if (-not $providerMap.ContainsKey($provChoice)) {
@@ -445,40 +1105,33 @@ function New-Profile {
 
     $provInfo = $providerMap[$provChoice]
 
-    # Model
     Write-Host ""
     Write-Host "   Model [$($provInfo.defaultModel)]: " -ForegroundColor $UI.BodyText -NoNewline
     $modelInput = (Read-Host).Trim()
     $model = if ($modelInput -eq "") { $provInfo.defaultModel } else { $modelInput }
 
-    # Custom URL if needed
     $apiUrl = $provInfo.url
     if ($provChoice -eq "5") {
         Write-Host "   API endpoint URL: " -ForegroundColor $UI.BodyText -NoNewline
         $apiUrl = (Read-Host).Trim()
     }
 
-    # API key (skip for Ollama)
     $apiKey = ""
     if ($provInfo.name -ne "ollama") {
         Write-Host "   API key: " -ForegroundColor $UI.BodyText -NoNewline
-        # Read as secure then convert — keeps it off screen history
         $secureKey = Read-Host -AsSecureString
         $apiKey    = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
                          [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureKey))
     }
 
-    # Max tokens
     Write-Host "   Max tokens [4096]: " -ForegroundColor $UI.BodyText -NoNewline
     $tokInput  = (Read-Host).Trim()
     $maxTokens = if ($tokInput -match '^\d+$') { [int]$tokInput } else { 4096 }
 
-    # Temperature
     Write-Host "   Temperature [0.7]: " -ForegroundColor $UI.BodyText -NoNewline
     $tempInput = (Read-Host).Trim()
     $temp      = if ($tempInput -match '^\d*\.?\d+$') { [double]$tempInput } else { 0.7 }
 
-    # Build profile object
     $profile = [ordered]@{
         profile_name         = $profileName
         provider             = $provInfo.name
@@ -497,7 +1150,6 @@ function New-Profile {
     Write-Msg -Role "ok" -Content "Profile '$profileName' created."
     Write-ActionLog "Profile created: $profileName ($($provInfo.name) / $model)"
 
-    # Offer to activate
     Write-Host ""
     Write-Host "   Activate this profile now? (y/n): " -ForegroundColor $UI.BodyText -NoNewline
     $activate = (Read-Host).Trim().ToLower()
@@ -517,7 +1169,6 @@ function Switch-Profile {
         return
     }
 
-    # Try exact match first, then partial
     $match = $profiles | Where-Object {
         ($_ | Get-Content -Raw | ConvertFrom-Json).profile_name -eq $Name
     } | Select-Object -First 1
@@ -536,13 +1187,10 @@ function Switch-Profile {
     $profileData = Get-Content $match.FullName -Raw | ConvertFrom-Json
     $State.ActiveProfile = $profileData
 
-    # Save as active in settings
-    $sp = "$DataFolder\settings.json"
-    $s  = Get-Settings
+    $s = Get-Settings
     $s.active_profile = $profileData.profile_name
-    $s | ConvertTo-Json -Depth 5 | Set-Content $sp -Encoding UTF8
+    Write-SettingsAtomic -Settings $s
 
-    # Refresh header
     [Console]::Clear()
     Write-Header
     Write-Msg -Role "ok" -Content "Switched to profile: $($profileData.profile_name)  ($($profileData.provider) / $($profileData.model))"
@@ -620,19 +1268,16 @@ function Load-ActiveProfile {
 
 function Get-TokenEstimate {
     param([string]$Text)
-    # Rough estimate: ~4 chars per token
     return [Math]::Ceiling($Text.Length / 4)
 }
 
 function Trim-ChatHistory {
-    # Keep system-critical messages, trim oldest turns when near limit
     $totalChars = ($State.ChatHistory | ForEach-Object { $_.content } | Measure-Object -Character).Characters
     $estimated  = [Math]::Ceiling($totalChars / 4)
     $State.TokenEstimate = $estimated
 
     $softLimit = $State.MaxContextTokens
     while ($estimated -gt $softLimit -and $State.ChatHistory.Count -gt 4) {
-        # Remove oldest non-feedback pair
         $idx = 0
         while ($idx -lt $State.ChatHistory.Count -and
                ($State.ChatHistory[$idx].content -like "[AXON*" -or
@@ -658,8 +1303,7 @@ function Load-SmartMemory {
     if (Test-Path $memPath) {
         try {
             $raw = Get-Content $memPath -Raw | ConvertFrom-Json
-            # Convert PSCustomObject to hashtable
-            $ht = @{}
+            $ht  = @{}
             $raw.PSObject.Properties | ForEach-Object { $ht[$_.Name] = $_.Value }
             $State.SmartMemory = $ht
         } catch { $State.SmartMemory = @{} }
@@ -668,7 +1312,13 @@ function Load-SmartMemory {
 
 function Save-SmartMemory {
     $memPath = "$DataFolder\smart_memory.json"
-    $State.SmartMemory | ConvertTo-Json -Depth 5 | Set-Content $memPath -Encoding UTF8
+    $tmp     = "$memPath.tmp"
+    try {
+        $State.SmartMemory | ConvertTo-Json -Depth 5 | Set-Content $tmp -Encoding UTF8
+        Move-Item -Path $tmp -Destination $memPath -Force
+    } catch {
+        $State.SmartMemory | ConvertTo-Json -Depth 5 | Set-Content $memPath -Encoding UTF8
+    }
 }
 
 function Update-SmartMemory {
@@ -737,7 +1387,7 @@ function Invoke-FunctionCall {
 }
 
 function Register-CoreFunctions {
-    # $SEARCH$ — web search via Invoke-WebRequest to DuckDuckGo instant API
+    # $SEARCH$ — web search via DuckDuckGo instant API
     Register-AXONFunction -Name "search" -Description "Search the web and return top results" `
         -Parameters @{ query = "The search query string" } `
         -Handler {
@@ -749,7 +1399,7 @@ function Register-CoreFunctions {
                 if ($resp.AbstractText) { $lines.Add("Summary: $($resp.AbstractText)") | Out-Null }
                 if ($resp.RelatedTopics) {
                     $top = $resp.RelatedTopics | Where-Object { $_.Text } | Select-Object -First 5
-                    foreach ($t in $top) { $lines.Add("• $($t.Text)") | Out-Null }
+                    foreach ($t in $top) { $lines.Add("- $($t.Text)") | Out-Null }
                 }
                 if ($lines.Count -eq 0) { return "No results found for: $query" }
                 return $lines -join "`n"
@@ -785,7 +1435,6 @@ function Register-CoreFunctions {
                 [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("AXON").Show($toast)
                 return "[OK] Notification sent: $title"
             } catch {
-                # Fallback: use msg.exe
                 try { msg * "$title`n$message" 2>$null } catch {}
                 return "[OK] Notification dispatched (fallback)."
             }
@@ -843,6 +1492,24 @@ function Register-CoreFunctions {
             Update-SmartMemory -Key $key -Value $value
             return "[OK] Memory stored: $key = $value"
         }
+
+    # v1.1: $TASK$ — add a task to the tracker
+    Register-AXONFunction -Name "task_add" -Description "Add a step to the multi-step task tracker" `
+        -Parameters @{ title = "Task title"; note = "Optional note or context"; status = "waiting, active, or done" } `
+        -Handler {
+            param([string]$title, [string]$note = "", [string]$status = "waiting")
+            Add-Task -Title $title -Note $note -Status $status
+            return "[OK] Task added: $title [$status]"
+        }
+
+    # v1.1: $TASK_UPDATE$ — update task status
+    Register-AXONFunction -Name "task_update" -Description "Update a task's status in the tracker" `
+        -Parameters @{ title = "Task title or partial title"; status = "waiting, active, or done" } `
+        -Handler {
+            param([string]$title, [string]$status)
+            $r = Set-TaskStatus -TitleOrId $title -Status $status
+            return if ($r) { "[OK] Task updated: $title -> $status" } else { "[WARN] Task not found: $title" }
+        }
 }
 
 
@@ -857,20 +1524,16 @@ function Load-Plugins {
 
     foreach ($plugin in $plugins) {
         try {
-            $content = Get-Content $plugin.FullName -Raw
+            $content    = Get-Content $plugin.FullName -Raw
+            $nameMatch  = [regex]::Match($content, '#\s*PLUGIN_NAME\s*:\s*(.+)')
+            $descMatch  = [regex]::Match($content, '#\s*PLUGIN_DESC\s*:\s*(.+)')
+            $pName      = if ($nameMatch.Success) { $nameMatch.Groups[1].Value.Trim() } else { $plugin.BaseName }
+            $pDesc      = if ($descMatch.Success) { $descMatch.Groups[1].Value.Trim() } else { "Plugin: $($plugin.BaseName)" }
 
-            # Extract plugin metadata from header comments
-            $nameMatch = [regex]::Match($content, '#\s*PLUGIN_NAME\s*:\s*(.+)')
-            $descMatch = [regex]::Match($content, '#\s*PLUGIN_DESC\s*:\s*(.+)')
-            $pName = if ($nameMatch.Success) { $nameMatch.Groups[1].Value.Trim() } else { $plugin.BaseName }
-            $pDesc = if ($descMatch.Success) { $descMatch.Groups[1].Value.Trim() } else { "Plugin: $($plugin.BaseName)" }
-
-            # Dot-source the plugin (loads its functions into scope)
             . $plugin.FullName
 
             $State.LoadedPlugins.Add(@{ name = $pName; desc = $pDesc; file = $plugin.Name }) | Out-Null
 
-            # Register a function call for the plugin
             $pNameLocal = $pName
             Register-AXONFunction -Name "plugin_$pNameLocal" -Description $pDesc `
                 -Parameters @{ input = "Input to pass to the plugin" } `
@@ -907,20 +1570,17 @@ function Invoke-AICall {
     $profile  = $State.ActiveProfile
     $provider = $profile.provider
 
-    # Trim context if getting large
     Trim-ChatHistory
 
-    # Build body with stream:true
     $bodyObj = Build-ApiBody -Profile $profile -Messages $History.ToArray() -SystemPrompt $SystemPrompt -Stream $true
     if (-not $bodyObj) {
         Write-Msg -Role "error" -Content "Unknown provider: $provider"
         return $null
     }
 
-    $bodyJson = $bodyObj | ConvertTo-Json -Depth 10
+    $bodyJson  = $bodyObj | ConvertTo-Json -Depth 10
     $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($bodyJson)
 
-    # Build headers
     $headerScript = $PROVIDER_HEADERS[$provider]
     $headers      = & $headerScript $profile
 
@@ -930,7 +1590,6 @@ function Invoke-AICall {
     $fullText = [System.Text.StringBuilder]::new()
 
     try {
-        # Use HttpWebRequest for true streaming
         $req = [System.Net.HttpWebRequest]::Create($profile.api_url)
         $req.Method      = "POST"
         $req.ContentType = "application/json"
@@ -944,19 +1603,15 @@ function Invoke-AICall {
         $resp   = $req.GetResponse()
         $reader = [System.IO.StreamReader]::new($resp.GetResponseStream())
 
-        $lineBuffer = ""
-
         while (-not $reader.EndOfStream) {
             $line = $reader.ReadLine()
             if ([string]::IsNullOrEmpty($line)) { continue }
 
-            # SSE format: "data: {...}"
             if ($line.StartsWith("data: ")) {
                 $jsonStr = $line.Substring(6).Trim()
                 if ($jsonStr -eq "[DONE]") { break }
                 try {
                     $chunk = $jsonStr | ConvertFrom-Json
-
                     $delta = ""
                     switch ($provider) {
                         "anthropic" {
@@ -971,14 +1626,12 @@ function Invoke-AICall {
                             $delta = $chunk.message.content
                         }
                     }
-
                     if ($delta) {
                         $fullText.Append($delta) | Out-Null
                         Write-Host $delta -NoNewline -ForegroundColor $UI.BodyText
                     }
                 } catch { continue }
             } elseif ($provider -eq "ollama") {
-                # Ollama uses newline-delimited JSON, not SSE
                 try {
                     $chunk = $line | ConvertFrom-Json
                     $delta = $chunk.message.content
@@ -993,7 +1646,7 @@ function Invoke-AICall {
 
         $reader.Close()
         $resp.Close()
-        Write-Host ""  # newline after streaming
+        Write-Host ""
 
         $text = $fullText.ToString()
         if ([string]::IsNullOrWhiteSpace($text)) {
@@ -1002,11 +1655,10 @@ function Invoke-AICall {
             return $null
         }
 
-        # Add full assembled reply to history
         $History.Add(@{ role = "assistant"; content = $text }) | Out-Null
-
-        # Update token estimate
         $State.TokenEstimate = Get-TokenEstimate -Text ($History | ForEach-Object { $_.content } | Out-String)
+        $State.LastAIReply   = $text
+        $State.LastAPIError  = ""
 
         Write-ActionLog "AI call (stream) — provider: $provider  model: $($profile.model)  chars: $($text.Length)"
         $State.AICallCount++
@@ -1025,6 +1677,7 @@ function Invoke-AICall {
         } catch {}
         Write-Msg -Role "error" -Content "API call failed: $errMsg"
         Write-ActionLog "API call FAILED: $errMsg"
+        $State.LastAPIError = $errMsg
         if ($History.Count -gt 0 -and $History[$History.Count-1].role -eq "user") {
             $History.RemoveAt($History.Count - 1)
         }
@@ -1034,7 +1687,7 @@ function Invoke-AICall {
 
 
 # ================================================================
-#  v1.0 — UPDATED API BODY BUILDER (stream param)
+#  v1.0 — API BODY BUILDER
 # ================================================================
 
 $PROVIDER_HEADERS = @{
@@ -1115,6 +1768,11 @@ function Build-ApiBody {
     return $null
 }
 
+
+# ================================================================
+#  SIMPLE COMMAND HANDLERS
+# ================================================================
+
 function Invoke-MemoryCommand {
     $memPath = "$DataFolder\memory.txt"
     Write-Host ""
@@ -1135,36 +1793,61 @@ function Invoke-FilesCommand {
     Write-Host "   AXON Data Folder  —  $DataFolder" -ForegroundColor $UI.Header
     Write-ThinDivider
 
-    $subFolders = @("profiles","sessions","temp","workspace","logs")
+    $subFolders = @("profiles","sessions","temp","workspace","logs","plugins","macros")
     foreach ($sub in $subFolders) {
         $path  = "$DataFolder\$sub"
         $items = Get-ChildItem $path -ErrorAction SilentlyContinue
         $count = if ($items) { $items.Count } else { 0 }
-        Write-Host ("   📁 {0,-16} ({1} items)" -f "$sub/", $count) -ForegroundColor $UI.BodyText
+        Write-Host ("   [F] {0,-16} ({1} items)" -f "$sub/", $count) -ForegroundColor $UI.BodyText
 
         if ($count -gt 0 -and $count -le 6) {
             foreach ($item in $items) {
-                Write-Host "      └─ $($item.Name)" -ForegroundColor $UI.DimText
+                Write-Host "      -> $($item.Name)" -ForegroundColor $UI.DimText
             }
         } elseif ($count -gt 6) {
-            Write-Host "      └─ ... and $count items" -ForegroundColor $UI.DimText
+            Write-Host "      -> ... and $count items" -ForegroundColor $UI.DimText
         }
     }
 
-    # Root files
     $rootFiles = Get-ChildItem $DataFolder -File -ErrorAction SilentlyContinue
     if ($rootFiles) {
         Write-Host ""
         foreach ($f in $rootFiles) {
-            Write-Host "   📄 $($f.Name)" -ForegroundColor $UI.DimText
+            $sz = [Math]::Round($f.Length/1KB, 1)
+            Write-Host ("   [f] {0,-30} {1} KB" -f $f.Name, $sz) -ForegroundColor $UI.DimText
         }
     }
     Write-ThinDivider
 }
 
+# ── v1.1: /temp  — show or clean temp folder ──
 function Invoke-TempCommand {
+    param([string]$Sub = "")
+
     $tempPath = "$DataFolder\temp"
-    $items    = Get-ChildItem $tempPath -ErrorAction SilentlyContinue
+
+    if ($Sub -eq "clean") {
+        $items = Get-ChildItem $tempPath -File -ErrorAction SilentlyContinue
+        if (-not $items -or $items.Count -eq 0) {
+            Write-Msg -Role "system" -Content "Temp folder is already empty."
+            return
+        }
+        Write-Host ""
+        Write-Host "  Delete $($items.Count) file(s) from temp/? (y/n): " -ForegroundColor $UI.WarnText -NoNewline
+        if ((Read-Host).Trim().ToLower() -notin @("y","yes")) {
+            Write-Msg -Role "system" -Content "Cancelled."
+            return
+        }
+        $removed = 0
+        foreach ($f in $items) {
+            try { Remove-Item $f.FullName -Force; $removed++ } catch {}
+        }
+        Write-Msg -Role "ok" -Content "Removed $removed file(s) from temp/."
+        Write-ActionLog "TEMP CLEAN: $removed files removed by user"
+        return
+    }
+
+    $items = Get-ChildItem $tempPath -ErrorAction SilentlyContinue
     Write-Host ""
     Write-ThinDivider
     Write-Host "   Temp — Files Awaiting Approval" -ForegroundColor $UI.Header
@@ -1174,9 +1857,12 @@ function Invoke-TempCommand {
     } else {
         foreach ($item in $items) {
             $size = [Math]::Round($item.Length / 1KB, 1)
-            Write-Host ("   • {0,-30} {1} KB" -f $item.Name, $size) -ForegroundColor $UI.BodyText
+            $age  = [Math]::Round(((Get-Date) - $item.LastWriteTime).TotalHours, 1)
+            Write-Host ("   {0,-32} {1,6} KB  {2}h ago" -f $item.Name, $size, $age) -ForegroundColor $UI.BodyText
         }
     }
+    Write-ThinDivider
+    Write-Host "   /temp clean  -> delete all temp files now" -ForegroundColor $UI.DimText
     Write-ThinDivider
 }
 
@@ -1199,6 +1885,31 @@ function Invoke-LogCommand {
     Write-ThinDivider
 }
 
+# ── v1.1: /logs clean — archive and rotate ──
+function Invoke-LogsCleanCommand {
+    $logPath = "$DataFolder\logs\actions.log"
+    if (-not (Test-Path $logPath)) {
+        Write-Msg -Role "system" -Content "No action log file exists yet."
+        return
+    }
+    $size = [Math]::Round((Get-Item $logPath).Length / 1KB, 1)
+    Write-Host ""
+    Write-Host "  Archive and clear actions.log ($size KB)? (y/n): " -ForegroundColor $UI.WarnText -NoNewline
+    if ((Read-Host).Trim().ToLower() -notin @("y","yes")) {
+        Write-Msg -Role "system" -Content "Cancelled."
+        return
+    }
+    $archive = "$DataFolder\logs\actions_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
+    try {
+        Move-Item -Path $logPath -Destination $archive -Force
+        New-Item -ItemType File -Path $logPath -Force | Out-Null
+        Write-Msg -Role "ok" -Content "Archived to: $([System.IO.Path]::GetFileName($archive))  ($size KB)"
+        Write-ActionLog "LOG ROTATED — archived $([System.IO.Path]::GetFileName($archive))"
+    } catch {
+        Write-Msg -Role "error" -Content "Log rotation failed: $($_.Exception.Message)"
+    }
+}
+
 function Invoke-SettingsCommand {
     Write-Host ""
     Write-ThinDivider
@@ -1206,20 +1917,21 @@ function Invoke-SettingsCommand {
     Write-ThinDivider
     $s = Get-Settings
     if ($s) {
-        Write-Host ("   {0,-32} {1}" -f "Active profile:",       ($s.active_profile ?? "none"))         -ForegroundColor $UI.BodyText
-        Write-Host ("   {0,-32} {1}" -f "Dry run before execute:", $s.dry_run_before_execute)            -ForegroundColor $UI.BodyText
-        Write-Host ("   {0,-32} {1}" -f "Max executions/min:",    $s.max_executions_per_minute)         -ForegroundColor $UI.BodyText
-        Write-Host ("   {0,-32} {1}" -f "Auto memory:",           $s.auto_memory)                       -ForegroundColor $UI.BodyText
+        Write-Host ("   {0,-34} {1}" -f "Active profile:",       ($s.active_profile ?? "none"))         -ForegroundColor $UI.BodyText
+        Write-Host ("   {0,-34} {1}" -f "Dry run before execute:", $s.dry_run_before_execute)            -ForegroundColor $UI.BodyText
+        Write-Host ("   {0,-34} {1}" -f "Max executions/min:",    $s.max_executions_per_minute)         -ForegroundColor $UI.BodyText
+        Write-Host ("   {0,-34} {1}" -f "Auto memory:",           $s.auto_memory)                       -ForegroundColor $UI.BodyText
+        Write-Host ("   {0,-34} {1}" -f "Approval timeout (sec):", $s.approval_timeout_seconds)         -ForegroundColor $UI.BodyText
         Write-Host ""
         Write-Host "   Blocked paths (hardcoded):" -ForegroundColor $UI.DimText
         foreach ($bp in $s.blocked_paths) {
-            Write-Host "     🔴 $bp" -ForegroundColor $UI.DimText
+            Write-Host "     [X] $bp" -ForegroundColor $UI.DimText
         }
         if ($s.user_blocked_paths -and $s.user_blocked_paths.Count -gt 0) {
             Write-Host ""
             Write-Host "   Blocked paths (user-defined):" -ForegroundColor $UI.DimText
             foreach ($up in $s.user_blocked_paths) {
-                Write-Host "     🔴 $up" -ForegroundColor $UI.DimText
+                Write-Host "     [X] $up" -ForegroundColor $UI.DimText
             }
         }
         Write-Host ""
@@ -1234,7 +1946,6 @@ function Invoke-LockCommand {
     if (-not $Path) { Write-Msg -Role "error" -Content "Usage: /lock [path]"; return }
 
     $s    = Get-Settings
-    $sp   = "$DataFolder\settings.json"
     $list = [System.Collections.ArrayList]@($s.user_blocked_paths)
 
     if ($list -contains $Path) {
@@ -1242,7 +1953,7 @@ function Invoke-LockCommand {
     } else {
         $list.Add($Path) | Out-Null
         $s.user_blocked_paths = $list.ToArray()
-        $s | ConvertTo-Json -Depth 5 | Set-Content $sp -Encoding UTF8
+        Write-SettingsAtomic -Settings $s
         Write-Msg -Role "ok"  -Content "Locked: $Path"
         Write-ActionLog "User locked path: $Path"
     }
@@ -1253,13 +1964,12 @@ function Invoke-UnlockCommand {
     if (-not $Path) { Write-Msg -Role "error" -Content "Usage: /unlock [path]"; return }
 
     $s    = Get-Settings
-    $sp   = "$DataFolder\settings.json"
     $list = [System.Collections.ArrayList]@($s.user_blocked_paths)
 
     if ($list -contains $Path) {
         $list.Remove($Path)
         $s.user_blocked_paths = $list.ToArray()
-        $s | ConvertTo-Json -Depth 5 | Set-Content $sp -Encoding UTF8
+        Write-SettingsAtomic -Settings $s
         Write-Msg -Role "ok"  -Content "Unlocked: $Path"
         Write-ActionLog "User unlocked path: $Path"
     } else {
@@ -1267,29 +1977,64 @@ function Invoke-UnlockCommand {
     }
 }
 
+# ── v1.1: Enhanced /peek with line count, modified date, encoding hint ──
 function Invoke-PeekCommand {
     param([string]$Path)
     if (-not $Path) { Write-Msg -Role "error" -Content "Usage: /peek [filepath]"; return }
     if (-not (Test-Path $Path)) { Write-Msg -Role "error" -Content "File not found: $Path"; return }
 
-    $item = Get-Item $Path
+    $item       = Get-Item $Path
+    $modifiedAt = $item.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss")
+    $sizeKB     = [Math]::Round($item.Length / 1KB, 1)
+    $totalLines = 0
+
     Write-Host ""
     Write-ThinDivider
-    Write-Host "   Peek: $($item.Name)  ($([Math]::Round($item.Length/1KB,1)) KB)" -ForegroundColor $UI.Header
+    Write-Host "   Peek: $($item.Name)" -ForegroundColor $UI.Header
+    Write-Host ("   {0,-16} {1}" -f "Size:", "$sizeKB KB") -ForegroundColor $UI.DimText
+    Write-Host ("   {0,-16} {1}" -f "Modified:", $modifiedAt)   -ForegroundColor $UI.DimText
+    Write-Host ("   {0,-16} {1}" -f "Full path:", $item.FullName) -ForegroundColor $UI.DimText
     Write-ThinDivider
 
     try {
-        $lines = Get-Content $Path -TotalCount 30 -ErrorAction Stop
-        foreach ($line in $lines) { Write-Host "   $line" -ForegroundColor $UI.BodyText }
-        if ((Get-Content $Path).Count -gt 30) {
-            Write-Host "   ... (showing first 30 lines)" -ForegroundColor $UI.DimText
+        $allLines   = Get-Content $Path -ErrorAction Stop
+        $totalLines = $allLines.Count
+        $showLines  = $allLines | Select-Object -First 50
+        $lineNum    = 1
+        foreach ($line in $showLines) {
+            Write-Host ("   {0,4}  {1}" -f $lineNum, $line) -ForegroundColor $UI.BodyText
+            $lineNum++
         }
+        if ($totalLines -gt 50) {
+            Write-Host ""
+            Write-Host ("   ... {0} more line(s) not shown" -f ($totalLines - 50)) -ForegroundColor $UI.DimText
+        }
+        Write-ThinDivider
+        Write-Host ("   Total lines: $totalLines") -ForegroundColor $UI.DimText
     } catch {
         Write-Host "   Cannot preview this file type." -ForegroundColor $UI.DimText
     }
     Write-ThinDivider
 }
 
+# ── v1.1: /open — open a file or URL directly from the command line ──
+function Invoke-OpenCommand {
+    param([string]$Target)
+    if (-not $Target) { Write-Msg -Role "error" -Content "Usage: /open [path or URL]"; return }
+
+    if ($Target -notmatch '^https?://' -and -not (Test-PathSafe -TargetPath $Target)) {
+        Write-Msg -Role "error" -Content "Blocked path: $Target"
+        return
+    }
+
+    try {
+        Start-Process $Target
+        Write-Msg -Role "ok" -Content "Opened: $Target"
+        Write-ActionLog "USER OPEN: $Target"
+    } catch {
+        Write-Msg -Role "error" -Content "Failed to open: $($_.Exception.Message)"
+    }
+}
 
 
 # ================================================================
@@ -1297,18 +2042,11 @@ function Invoke-PeekCommand {
 # ================================================================
 
 function Build-ScriptSnapshot {
-    <#
-    .SYNOPSIS
-        Reads the live script file, strips the SAFETY_START/SAFETY_END block,
-        and writes the sanitized copy to the Data folder.
-        Returns the sanitized content as a string.
-    #>
     $snapshotPath = "$DataFolder\script_snapshot.ps1"
 
     try {
         $selfPath = $PSCommandPath
         if (-not $selfPath -or -not (Test-Path $selfPath)) {
-            # Fallback: try MyInvocation
             $selfPath = $MyInvocation.ScriptName
         }
 
@@ -1318,9 +2056,9 @@ function Build-ScriptSnapshot {
             return $notice
         }
 
-        $lines      = Get-Content $selfPath
-        $sanitized  = [System.Collections.ArrayList]@()
-        $inSafety   = $false
+        $lines     = Get-Content $selfPath
+        $sanitized = [System.Collections.ArrayList]@()
+        $inSafety  = $false
 
         foreach ($line in $lines) {
             if ($line.Trim() -eq "#SAFETY_START") {
@@ -1338,7 +2076,11 @@ function Build-ScriptSnapshot {
         }
 
         $content = $sanitized -join "`n"
-        Set-Content -Path $snapshotPath -Value $content -Encoding UTF8
+        # Atomic write for snapshot too
+        $tmpSnap = "$snapshotPath.tmp"
+        Set-Content -Path $tmpSnap -Value $content -Encoding UTF8
+        Move-Item -Path $tmpSnap -Destination $snapshotPath -Force
+
         Write-ActionLog "Script snapshot generated — $($sanitized.Count) lines (safety block redacted)"
         return $content
 
@@ -1394,6 +2136,18 @@ function Build-SystemPrompt {
         $macroBlock = $macroLines -join "`n"
     } else { $macroBlock = "  No macros saved yet." }
 
+    # v1.1 — Active tasks block
+    $taskBlock = if ($State.Tasks.Count -eq 0) { "  No tasks." } else {
+        $State.Tasks | ForEach-Object {
+            $icon = switch ($_.status) { "done" { "[v]" } "active" { "[>]" } default { "[ ]" } }
+            "  $icon $($_.title)$(if($_.note){ ' — ' + $_.note })"
+        }
+        ($State.Tasks | ForEach-Object {
+            $icon = switch ($_.status) { "done" { "[v]" } "active" { "[>]" } default { "[ ]" } }
+            "  $icon $($_.title)$(if($_.note){ ' — ' + $_.note })"
+        }) -join "`n"
+    }
+
     $prompt = @"
 ╔══════════════════════════════════════════════════════════════════╗
   AXON v$AXON_VERSION — AI INTERFACE DOCUMENT  (fresh every call)
@@ -1424,40 +2178,53 @@ WHO YOU ARE
 
 TAG PROTOCOL  (embed these in your response to take action)
 
-  ┌────────────────────────────────────────────────────────────────┐
-  │ TAG                          │ PURPOSE               │ TIER    │
-  ├────────────────────────────────────────────────────────────────┤
-  │ `$CODE$`...`$ENDCODE$`        │ Execute PowerShell    │ 🟡      │
-  │ `$FILE:name$`...`$ENDFILE$`   │ Create a file         │ 🟡      │
-  │ `$PLACE:path$`                │ Move temp→real path   │ 🟡      │
-  │ `$READ:path$`                 │ Read file → context   │ 🟢 auto │
-  │ `$CONFIRM:msg$`               │ Ask user yes/no       │ 🟡      │
-  │ `$WARN:msg$`                  │ Flag risk             │ 🟢 disp │
-  │ `$MEMORY:content$`            │ Write memory.txt      │ 🟢 auto │
-  │ `$SEARCH:query$`              │ Web search            │ 🟡      │
-  │ `$OPEN:target$`               │ Open file/URL/app     │ 🟡      │
-  │ `$NOTIFY:title|message$`      │ Windows notification  │ 🟢 auto │
-  │ `$CLIP:read$`                 │ Read clipboard        │ 🟢 auto │
-  │ `$CLIP:write|text$`           │ Write to clipboard    │ 🟡      │
-  │ `$STATUS:message$`            │ Update AXON status bar│ 🟢 auto │
-  │ `$MACRO:save|name|steps$`     │ Save a macro          │ 🟡      │
-  │ `$MACRO:run|name$`            │ Run saved macro       │ 🟡      │
-  │ `$MEMSET:key|value$`          │ Store to smart memory │ 🟢 auto │
-  │ `$PLUGIN:name|input$`         │ Call a loaded plugin  │ 🟡      │
-  └────────────────────────────────────────────────────────────────┘
+  ┌──────────────────────────────────────────────────────────────────┐
+  │ TAG                            │ PURPOSE                │ TIER    │
+  ├──────────────────────────────────────────────────────────────────┤
+  │ `$CODE$`...`$ENDCODE$`          │ Execute PowerShell     │ CONFIRM │
+  │ `$FILE:name$`...`$ENDFILE$`     │ Create a file          │ CONFIRM │
+  │ `$PLACE:path$`                  │ Move temp -> real path │ CONFIRM │
+  │ `$READ:path$`                   │ Read file -> context   │ AUTO    │
+  │ `$CONFIRM:msg$`                 │ Ask user yes/no        │ CONFIRM │
+  │ `$WARN:msg$`                    │ Flag risk              │ AUTO    │
+  │ `$MEMORY:content$`              │ Write memory.txt       │ AUTO    │
+  │ `$SEARCH:query$`                │ Web search             │ CONFIRM │
+  │ `$OPEN:target$`                 │ Open file/URL/app      │ CONFIRM │
+  │ `$NOTIFY:title|message$`        │ Windows notification   │ AUTO    │
+  │ `$CLIP:read$`                   │ Read clipboard         │ AUTO    │
+  │ `$CLIP:write|text$`             │ Write to clipboard     │ CONFIRM │
+  │ `$STATUS:message$`              │ Update AXON status bar │ AUTO    │
+  │ `$MACRO:save|name|steps$`       │ Save a macro           │ CONFIRM │
+  │ `$MACRO:run|name$`              │ Run saved macro        │ CONFIRM │
+  │ `$MEMSET:key|value$`            │ Store to smart memory  │ AUTO    │
+  │ `$PLUGIN:name|input$`           │ Call a loaded plugin   │ CONFIRM │
+  │ `$TASK:title|note|status$`      │ Add task to tracker    │ AUTO    │
+  │ `$TASK_UPDATE:title|status$`    │ Update task status     │ AUTO    │
+  └──────────────────────────────────────────────────────────────────┘
+
+  TIER meanings:
+    AUTO    — runs immediately, no confirmation needed
+    CONFIRM — shows to user and requires y/n approval
+
+  TASK STATUS values: waiting (not started), active (in progress), done (complete)
 
   EXAMPLES:
-  Search the web:        `$SEARCH:latest PowerShell 7 features$`
-  Open a URL:            `$OPEN:https://docs.microsoft.com$`
-  Notify the user:       `$NOTIFY:Done|Your report is ready.$`
-  Read clipboard:        `$CLIP:read$`
-  Write clipboard:       `$CLIP:write|Here is the result...$`
-  Update status bar:     `$STATUS:Working on your report...$`
-  Save a macro:          `$MACRO:save|morning-check|check disk space then list recent files$`
-  Run a macro:           `$MACRO:run|morning-check$`
-  Store smart memory:    `$MEMSET:user_project|C:\Projects\webapp$`
+  Add a task:           `$TASK:Write report|Draft executive summary|active$`
+  Complete a task:      `$TASK_UPDATE:Write report|done$`
+  Search the web:       `$SEARCH:latest PowerShell 7 features$`
+  Open a URL:           `$OPEN:https://docs.microsoft.com$`
+  Notify the user:      `$NOTIFY:Done|Your report is ready.$`
+  Read clipboard:       `$CLIP:read$`
+  Write clipboard:      `$CLIP:write|Here is the result...$`
+  Update status bar:    `$STATUS:Working on your report...$`
+  Save a macro:         `$MACRO:save|morning-check|check disk space then list recent files$`
+  Run a macro:          `$MACRO:run|morning-check$`
+  Store smart memory:   `$MEMSET:user_project|C:\Projects\webapp$`
 
 ══════════════════════════════════════════════════════════════════
+
+MULTI-STEP TASK TRACKER
+$taskBlock
 
 REGISTERED FUNCTIONS (auto-available this session)
 $fnBlock
@@ -1472,19 +2239,21 @@ $macroBlock
 
 DATA FOLDER  —  YOUR HOME BASE
   $DataFolder\
-    temp\       → YOUR staging area. Create files here freely.
-    workspace\  → Files you are actively reading/editing.
-    plugins\    → Loaded .ps1 plugins
-    macros\     → Saved macro definitions
-    memory.txt  → Your session notes
-    smart_memory.json → Your structured knowledge base
+    temp\       -> YOUR staging area. Create files here freely.
+    workspace\  -> Files you are actively reading/editing.
+    plugins\    -> Loaded .ps1 plugins
+    macros\     -> Saved macro definitions
+    memory.txt  -> Your session notes
+    smart_memory.json -> Your structured knowledge base
 
 RULES
-  ✅ Full read/write inside temp\ and workspace\
-  ✅ Use `$MEMSET$` to remember anything structured about the user
-  🔴 Cannot delete the Data folder itself
-  🔴 Cannot touch settings.json or profiles\
-  🔴 Cannot access Desktop or above without `$PLACE$` + approval
+  [OK] Full read/write inside temp\ and workspace\
+  [OK] Use `$MEMSET$` to remember anything structured about the user
+  [OK] Use `$TASK$` at the start of multi-step work to create a checklist
+  [OK] Use `$TASK_UPDATE$` to mark steps done as you complete them
+  [X]  Cannot delete the Data folder itself
+  [X]  Cannot touch settings.json or profiles\
+  [X]  Cannot access Desktop or above without `$PLACE$` + approval
 
 BLOCKED PATHS (hard-rejected, no exceptions)
   $blockedList
@@ -1501,6 +2270,7 @@ GOLDEN RULES
   5. Use `$WARN$` if anything feels risky.
   6. Use `$MEMSET$` to remember anything useful for next session.
   7. Use `$STATUS$` to keep the user informed during long tasks.
+  8. For multi-step work, create tasks with `$TASK$` and update as you go.
 
 ══════════════════════════════════════════════════════════════════
 
@@ -1518,7 +2288,6 @@ $snapshot
 "@
     return $prompt
 }
-
 
 
 # ================================================================
@@ -1602,34 +2371,34 @@ function Get-CodeSummary {
     foreach ($line in $lines) {
         $t = $line.Trim()
         switch -Regex ($t) {
-            '^Get-ChildItem|^ls |^dir '           { $summary.Add("📋 List files/folders")            | Out-Null }
-            '^Get-Content|^cat '                  { $summary.Add("📖 Read file content")              | Out-Null }
-            '^Set-Content|^Out-File|^Add-Content' { $summary.Add("✏️  Write to a file")               | Out-Null }
-            '^Copy-Item'                          { $summary.Add("📋 Copy a file or folder")          | Out-Null }
-            '^Move-Item'                          { $summary.Add("📦 Move a file or folder")          | Out-Null }
-            '^Remove-Item'                        { $summary.Add("🗑️  Delete a file or folder")        | Out-Null }
-            '^New-Item'                           { $summary.Add("🆕 Create a new file or folder")    | Out-Null }
-            '^Rename-Item'                        { $summary.Add("✏️  Rename a file or folder")        | Out-Null }
-            '^Start-Process'                      { $summary.Add("▶️  Launch a process/application")  | Out-Null }
-            '^Stop-Process'                       { $summary.Add("⏹️  Stop a running process")         | Out-Null }
-            '^Get-Process'                        { $summary.Add("📋 List running processes")         | Out-Null }
-            '^Invoke-WebRequest|^Invoke-RestMethod'{ $summary.Add("🌐 Make a web/network request")   | Out-Null }
-            '^Write-Output|^Write-Host'           { $summary.Add("💬 Print output to terminal")       | Out-Null }
-            '^Install-Package|^winget '           { $summary.Add("📦 Install software")              | Out-Null }
-            '^Register-ScheduledTask'             { $summary.Add("⏰ Create a scheduled task")        | Out-Null }
-            '^Compress-Archive|^Expand-Archive'   { $summary.Add("📦 Compress or extract archive")   | Out-Null }
+            '^Get-ChildItem|^ls |^dir '            { $summary.Add("[LIST] List files/folders")            | Out-Null }
+            '^Get-Content|^cat '                   { $summary.Add("[READ] Read file content")             | Out-Null }
+            '^Set-Content|^Out-File|^Add-Content'  { $summary.Add("[WRITE] Write to a file")             | Out-Null }
+            '^Copy-Item'                           { $summary.Add("[COPY] Copy a file or folder")        | Out-Null }
+            '^Move-Item'                           { $summary.Add("[MOVE] Move a file or folder")        | Out-Null }
+            '^Remove-Item'                         { $summary.Add("[DEL] Delete a file or folder")       | Out-Null }
+            '^New-Item'                            { $summary.Add("[NEW] Create a new file or folder")   | Out-Null }
+            '^Rename-Item'                         { $summary.Add("[RENAME] Rename a file or folder")    | Out-Null }
+            '^Start-Process'                       { $summary.Add("[PROC] Launch a process/application") | Out-Null }
+            '^Stop-Process'                        { $summary.Add("[STOP] Stop a running process")       | Out-Null }
+            '^Get-Process'                         { $summary.Add("[LIST] List running processes")       | Out-Null }
+            '^Invoke-WebRequest|^Invoke-RestMethod'{ $summary.Add("[NET] Make a web/network request")   | Out-Null }
+            '^Write-Output|^Write-Host'            { $summary.Add("[OUT] Print output to terminal")      | Out-Null }
+            '^Install-Package|^winget '            { $summary.Add("[PKG] Install software")             | Out-Null }
+            '^Register-ScheduledTask'              { $summary.Add("[SCHED] Create a scheduled task")    | Out-Null }
+            '^Compress-Archive|^Expand-Archive'    { $summary.Add("[ZIP] Compress or extract archive")  | Out-Null }
         }
     }
-    if ($summary.Count -eq 0) { $summary.Add("⚙️  Execute PowerShell ($($lines.Count) line(s))") | Out-Null }
+    if ($summary.Count -eq 0) { $summary.Add("[EXEC] Execute PowerShell ($($lines.Count) line(s))") | Out-Null }
     return ($summary | Select-Object -Unique)
 }
 
 function Request-UserConfirm {
     param([string]$Prompt)
     Write-Host ""
-    Write-Host "  ┌─ Confirm Action " -ForegroundColor $UI.WarnText
-    Write-Host "  │  $Prompt" -ForegroundColor White
-    Write-Host "  └─ Proceed? (y/n): " -ForegroundColor $UI.WarnText -NoNewline
+    Write-Host "  +-- Confirm Action " -ForegroundColor $UI.WarnText
+    Write-Host "  |   $Prompt" -ForegroundColor White
+    Write-Host "  +-- Proceed? (y/n): " -ForegroundColor $UI.WarnText -NoNewline
     $a = (Read-Host).Trim().ToLower()
     return ($a -eq "y" -or $a -eq "yes")
 }
@@ -1664,7 +2433,7 @@ function Invoke-CodeTag {
     $safety = Test-CodeSafe -Code $Code
     if (-not $safety.Safe) {
         Write-Host ""
-        Write-Host "  ██  CODE BLOCK REJECTED  ██" -ForegroundColor Red
+        Write-Host "  [!] CODE BLOCK REJECTED [!]" -ForegroundColor Red
         Write-Msg -Role "error" -Content "Safety violation: $($safety.Reason)"
         Write-ActionLog "CODE REJECTED — $($safety.Reason)"
         return "[REJECTED] $($safety.Reason)"
@@ -1699,7 +2468,7 @@ function Invoke-CodeTag {
     }
 
     Write-Host ""
-    Write-Host "  ◌ Executing..." -ForegroundColor $UI.DimText
+    Write-Host "  > Executing..." -ForegroundColor $UI.DimText
     try {
         $output = Invoke-Expression $Code 2>&1 | Out-String
         $output = $output.Trim()
@@ -1733,7 +2502,7 @@ function Invoke-FileTag {
     Write-Host ""
     Write-ThinDivider
     Write-Host "   AI wants to create a file:" -ForegroundColor $UI.WarnText
-    Write-Host "   📄 $destPath" -ForegroundColor White
+    Write-Host "   $destPath" -ForegroundColor White
     Write-ThinDivider
     $Content -split "`n" | Select-Object -First 8 | ForEach-Object { Write-Host "   $_" -ForegroundColor $UI.BodyText }
     $totalLines = ($Content -split "`n").Count
@@ -1752,7 +2521,9 @@ function Invoke-FileTag {
     }
 
     try {
-        Set-Content -Path $destPath -Value $Content -Encoding UTF8
+        $tmp = "$destPath.tmp"
+        Set-Content -Path $tmp -Value $Content -Encoding UTF8
+        Move-Item -Path $tmp -Destination $destPath -Force
         Write-Msg -Role "ok" -Content "File created: $destPath"
         Write-ActionLog "FILE CREATED: $destPath"
         Push-UndoEntry -Type "FILE_CREATE" -Data @{ path = $destPath }
@@ -1783,8 +2554,8 @@ function Invoke-PlaceTag {
     Write-Host ""
     Write-ThinDivider
     Write-Host "   AI wants to place a file:" -ForegroundColor $UI.WarnText
-    Write-Host "   From : $srcPath" -ForegroundColor $UI.DimText
-    Write-Host "   To   : $DestPath" -ForegroundColor White
+    Write-Host "   From : $srcPath"   -ForegroundColor $UI.DimText
+    Write-Host "   To   : $DestPath"  -ForegroundColor White
     Write-ThinDivider
 
     if ($State.SandboxMode) {
@@ -1803,7 +2574,7 @@ function Invoke-PlaceTag {
         if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
         Move-Item -Path $srcPath -Destination $DestPath -Force
         Write-Msg -Role "ok" -Content "File placed: $DestPath"
-        Write-ActionLog "FILE PLACED: $srcPath → $DestPath"
+        Write-ActionLog "FILE PLACED: $srcPath -> $DestPath"
         Push-UndoEntry -Type "FILE_PLACE" -Data @{ dest = $DestPath; src = $srcPath }
         return "[OK] Placed at $DestPath"
     } catch {
@@ -1847,9 +2618,9 @@ function Invoke-ReadTag {
 function Invoke-ConfirmTag {
     param([string]$Message)
     Write-Host ""
-    Write-Host "  ┌─ AI is asking for your confirmation" -ForegroundColor Magenta
-    Write-Host "  │  $Message" -ForegroundColor White
-    Write-Host "  └─ Proceed? (y/n): " -ForegroundColor Magenta -NoNewline
+    Write-Host "  +-- AI is asking for your confirmation" -ForegroundColor Magenta
+    Write-Host "  |   $Message" -ForegroundColor White
+    Write-Host "  +-- Proceed? (y/n): " -ForegroundColor Magenta -NoNewline
     $a = (Read-Host).Trim().ToLower()
     $r = ($a -eq "y" -or $a -eq "yes")
     Write-ActionLog "CONFIRM — '$Message' — $(if($r){'approved'}else{'denied'})"
@@ -1859,8 +2630,8 @@ function Invoke-ConfirmTag {
 function Invoke-WarnTag {
     param([string]$Message)
     Write-Host ""
-    Write-Host "  ⚠  AI WARNING" -ForegroundColor Yellow
-    Write-Host "     $Message"   -ForegroundColor Yellow
+    Write-Host "  [!] AI WARNING" -ForegroundColor Yellow
+    Write-Host "      $Message"   -ForegroundColor Yellow
     Write-ActionLog "WARN — $Message"
 }
 
@@ -1868,7 +2639,10 @@ function Invoke-MemoryTag {
     param([string]$Content)
     $memPath = "$DataFolder\memory.txt"
     $ts      = Get-Date -Format "yyyy-MM-dd HH:mm"
-    Set-Content -Path $memPath -Value "[$ts]`n$Content" -Encoding UTF8
+    # Atomic write
+    $tmp = "$memPath.tmp"
+    Set-Content -Path $tmp -Value "[$ts]`n$Content" -Encoding UTF8
+    Move-Item -Path $tmp -Destination $memPath -Force
     Write-Msg -Role "system" -Content "Memory updated for next session."
     Write-ActionLog "MEMORY written — $($Content.Length) chars"
 }
@@ -1887,13 +2661,12 @@ function Write-AIResponse {
     $firstLn = $true
     $line    = ""
     foreach ($word in ($Text -split ' ')) {
-        $test = if ($line) { "$line $word" } else { $word }
         $hasNL = $word.Contains("`n")
         if ($hasNL) {
             $parts2 = $word -split "`n"
             foreach ($i in 0..($parts2.Count-1)) {
-                $p    = $parts2[$i]
-                $tl   = if ($line) { "$line $p" } else { $p }
+                $p  = $parts2[$i]
+                $tl = if ($line) { "$line $p" } else { $p }
                 if ($tl.TrimStart().Length -gt $maxW -and $line) {
                     if ($firstLn) { Write-Host $line.TrimStart() -ForegroundColor $UI.BodyText; $firstLn = $false }
                     else          { Write-Host ($indent + $line.TrimStart()) -ForegroundColor $UI.BodyText }
@@ -1906,6 +2679,7 @@ function Write-AIResponse {
                 }
             }
         } else {
+            $test = if ($line) { "$line $word" } else { $word }
             if ($test.TrimStart().Length -gt $maxW -and $line) {
                 if ($firstLn) { Write-Host $line.TrimStart() -ForegroundColor $UI.BodyText; $firstLn = $false }
                 else          { Write-Host ($indent + $line.TrimStart()) -ForegroundColor $UI.BodyText }
@@ -1927,6 +2701,8 @@ function Get-DisplayText {
     $c = [regex]::Replace($c, '\$FILE:.+?\$.*?\$ENDFILE\$',  '[creating file...]',        $o)
     $c = [regex]::Replace($c, '\$MEMORY:.+?\$',              '',                          $o)
     $c = [regex]::Replace($c, '\$MEMSET:.+?\|.+?\$',         '',                          $o)
+    $c = [regex]::Replace($c, '\$TASK:.+?\|.+?\|.+?\$',      '',                          $o)
+    $c = [regex]::Replace($c, '\$TASK_UPDATE:.+?\|.+?\$',    '',                          $o)
     $c = $c -replace '\$PLACE:.+?\$',             '[placing file...]'
     $c = $c -replace '\$READ:.+?\$',              '[reading file...]'
     $c = $c -replace '\$CONFIRM:.+?\$',           '[requesting confirmation...]'
@@ -1954,8 +2730,7 @@ function Invoke-ParseResponse {
 
     # ── STATUS — update header bar (auto) ──
     foreach ($m in ([regex]::Matches($RawReply, '\$STATUS:(.+?)\$'))) {
-        $r = Invoke-FunctionCall -Name "status" -Args @{ message = $m.Groups[1].Value.Trim() }
-        Write-ActionLog "STATUS updated: $($m.Groups[1].Value.Trim())"
+        Invoke-FunctionCall -Name "status" -Args @{ message = $m.Groups[1].Value.Trim() } | Out-Null
     }
 
     # ── NOTIFY — auto ──
@@ -1974,6 +2749,25 @@ function Invoke-ParseResponse {
     foreach ($m in ([regex]::Matches($RawReply, '\$MEMSET:(.+?)\|(.+?)\$'))) {
         $r = Invoke-FunctionCall -Name "memory_set" -Args @{ key = $m.Groups[1].Value.Trim(); value = $m.Groups[2].Value.Trim() }
         $feedback.Add("[SMART MEMORY] $r") | Out-Null
+    }
+
+    # ── TASK — auto (add task to tracker) ──
+    foreach ($m in ([regex]::Matches($RawReply, '\$TASK:(.+?)\|(.+?)\|(.+?)\$'))) {
+        $r = Invoke-FunctionCall -Name "task_add" -Args @{
+            title  = $m.Groups[1].Value.Trim()
+            note   = $m.Groups[2].Value.Trim()
+            status = $m.Groups[3].Value.Trim()
+        }
+        $feedback.Add("[TASK] $r") | Out-Null
+    }
+
+    # ── TASK_UPDATE — auto ──
+    foreach ($m in ([regex]::Matches($RawReply, '\$TASK_UPDATE:(.+?)\|(.+?)\$'))) {
+        $r = Invoke-FunctionCall -Name "task_update" -Args @{
+            title  = $m.Groups[1].Value.Trim()
+            status = $m.Groups[2].Value.Trim()
+        }
+        $feedback.Add("[TASK_UPDATE] $r") | Out-Null
     }
 
     # ── MEMORY — write to memory.txt ──
@@ -2066,17 +2860,13 @@ function Invoke-ParseResponse {
         $name = $m.Groups[1].Value.Trim()
         if (Request-UserConfirm -Prompt "Run macro '$name'?") {
             $r = Invoke-FunctionCall -Name "macro" -Args @{ action = "run"; name = $name }
-            if ($r -and $r -notlike "[ERROR]*") {
-                $feedback.Add("[MACRO RUN: $name] $r") | Out-Null
-            } else {
-                $feedback.Add("[MACRO] $r") | Out-Null
-            }
+            $feedback.Add("[MACRO RUN: $name] $r") | Out-Null
         }
     }
 
     # ── PLUGIN — confirm ──
     foreach ($m in ([regex]::Matches($RawReply, '\$PLUGIN:(.+?)\|(.+?)\$', $o))) {
-        $pName = $m.Groups[1].Value.Trim()
+        $pName  = $m.Groups[1].Value.Trim()
         $pInput = $m.Groups[2].Value.Trim()
         if (Request-UserConfirm -Prompt "Run plugin '$pName'?") {
             $r = Invoke-FunctionCall -Name "plugin_$pName" -Args @{ input = $pInput }
@@ -2141,7 +2931,6 @@ function Save-SessionLog {
         $turns = [System.Collections.ArrayList]@()
 
         foreach ($msg in $State.ChatHistory) {
-            # Skip internal AXON feedback injections
             if ($msg.content -like "\[AXON*" -or $msg.content -like "\[CONTEXT*") { continue }
             $turns.Add([ordered]@{
                 role    = $msg.role
@@ -2153,7 +2942,11 @@ function Save-SessionLog {
         $log.ended_at   = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
         $log.ai_calls   = $State.AICallCount
         $log.executions = $State.ExecutionCount
-        $log | ConvertTo-Json -Depth 10 | Set-Content -Path $State.SessionLogPath -Encoding UTF8
+
+        # Atomic write for session log
+        $tmp = "$($State.SessionLogPath).tmp"
+        $log | ConvertTo-Json -Depth 10 | Set-Content -Path $tmp -Encoding UTF8
+        Move-Item -Path $tmp -Destination $State.SessionLogPath -Force
     } catch {
         Write-ActionLog "Session log save failed: $($_.Exception.Message)"
     }
@@ -2174,21 +2967,38 @@ function Invoke-HistoryCommand {
         Write-ThinDivider; return
     }
 
-    # /history load [n]
+    # ── v1.1: /history search [query] ──
+    if ($Sub -match '^search\s+(.+)$') {
+        $query = $Matches[1].Trim()
+        Invoke-HistorySearch -Query $query -Logs $logs
+        return
+    }
+
+    # ── v1.1: /history resume [n] ──
+    if ($Sub -match '^resume\s+(\d+)$') {
+        $idx = [int]$Matches[1] - 1
+        if ($idx -lt 0 -or $idx -ge $logs.Count) { Write-Msg -Role "error" -Content "Invalid session number."; return }
+        Load-SessionHistory -LogPath $logs[$idx].FullName; return
+    }
+
+    # ── v1.1: /history export [n] ──
+    if ($Sub -match '^export\s+(\d+)$') {
+        $idx = [int]$Matches[1] - 1
+        if ($idx -lt 0 -or $idx -ge $logs.Count) { Write-Msg -Role "error" -Content "Invalid session number."; return }
+        Export-SessionHistory -LogPath $logs[$idx].FullName; return
+    }
+
+    # Legacy: /history load [n]
     if ($Sub -match '^load\s+(\d+)$') {
         $idx = [int]$Matches[1] - 1
-        if ($idx -lt 0 -or $idx -ge $logs.Count) {
-            Write-Msg -Role "error" -Content "Invalid session number."; return
-        }
+        if ($idx -lt 0 -or $idx -ge $logs.Count) { Write-Msg -Role "error" -Content "Invalid session number."; return }
         Load-SessionHistory -LogPath $logs[$idx].FullName; return
     }
 
     # /history [n] — detail view
     if ($Sub -match '^\d+$') {
         $idx = [int]$Sub - 1
-        if ($idx -lt 0 -or $idx -ge $logs.Count) {
-            Write-Msg -Role "error" -Content "Invalid session number."; return
-        }
+        if ($idx -lt 0 -or $idx -ge $logs.Count) { Write-Msg -Role "error" -Content "Invalid session number."; return }
         Show-SessionDetail -LogPath $logs[$idx].FullName; return
     }
 
@@ -2204,7 +3014,7 @@ function Invoke-HistoryCommand {
         try {
             $d     = Get-Content $log.FullName -Raw | ConvertFrom-Json
             $turns = if ($d.turns) { $d.turns.Count } else { 0 }
-            $cur   = if ($State.SessionLogPath -eq $log.FullName) { " ◄" } else { "" }
+            $cur   = if ($State.SessionLogPath -eq $log.FullName) { " <" } else { "" }
             Write-Host ("   {0,-4} {1,-22} {2,-18} {3,-6} {4}{5}" -f $i, $d.started_at, $d.profile, $turns, $d.model, $cur) -ForegroundColor $UI.BodyText
         } catch {
             Write-Host "   $i   $($log.Name)  (unreadable)" -ForegroundColor $UI.DimText
@@ -2212,9 +3022,89 @@ function Invoke-HistoryCommand {
         $i++
     }
     Write-ThinDivider
-    Write-Host "   /history [n]       → view session detail" -ForegroundColor $UI.DimText
-    Write-Host "   /history load [n]  → resume session into context" -ForegroundColor $UI.DimText
+    Write-Host "   /history [n]           -> view session detail" -ForegroundColor $UI.DimText
+    Write-Host "   /history resume [n]    -> load session into context" -ForegroundColor $UI.DimText
+    Write-Host "   /history search [q]    -> search transcripts" -ForegroundColor $UI.DimText
+    Write-Host "   /history export [n]    -> export to text file" -ForegroundColor $UI.DimText
     Write-ThinDivider
+}
+
+# ── v1.1: History Search ──
+function Invoke-HistorySearch {
+    param([string]$Query, $Logs)
+    Write-Host ""
+    Write-ThinDivider
+    Write-Host "   History Search — '$Query'" -ForegroundColor $UI.Header
+    Write-ThinDivider
+
+    $found = $false
+    $i = 1
+    foreach ($log in $Logs) {
+        try {
+            $d = Get-Content $log.FullName -Raw | ConvertFrom-Json
+            if (-not $d.turns) { $i++; continue }
+
+            $matches = $d.turns | Where-Object { $_.content -like "*$Query*" }
+            if ($matches) {
+                $found = $true
+                Write-Host ""
+                Write-Host "   Session #$i  ($($d.started_at)  $($d.profile))" -ForegroundColor $UI.WarnText
+                foreach ($turn in $matches) {
+                    $snippet = $turn.content
+                    $idx     = $snippet.IndexOf($Query, [System.StringComparison]::OrdinalIgnoreCase)
+                    $start   = [Math]::Max(0, $idx - 40)
+                    $end     = [Math]::Min($snippet.Length, $idx + $Query.Length + 40)
+                    $preview = "..." + $snippet.Substring($start, $end - $start) + "..."
+                    $label   = if ($turn.role -eq "user") { "You" } else { " AI" }
+                    Write-Host "     [$label] $preview" -ForegroundColor $UI.BodyText
+                }
+            }
+        } catch {}
+        $i++
+    }
+
+    if (-not $found) {
+        Write-Host "   No matches found for '$Query' in any session." -ForegroundColor $UI.DimText
+    }
+    Write-ThinDivider
+}
+
+# ── v1.1: History Export ──
+function Export-SessionHistory {
+    param([string]$LogPath)
+    try { $d = Get-Content $LogPath -Raw | ConvertFrom-Json }
+    catch { Write-Msg -Role "error" -Content "Could not read session log."; return }
+
+    $outName = "AXON_Session_$($d.session_number)_$($d.started_at -replace '[: ]','-').txt"
+    $outPath = "$DataFolder\$outName"
+
+    $sb = [System.Text.StringBuilder]::new()
+    $sb.AppendLine("AXON Session Export") | Out-Null
+    $sb.AppendLine("===================") | Out-Null
+    $sb.AppendLine("Session #:  $($d.session_number)") | Out-Null
+    $sb.AppendLine("Started:    $($d.started_at)") | Out-Null
+    $sb.AppendLine("Ended:      $($d.ended_at)") | Out-Null
+    $sb.AppendLine("Profile:    $($d.profile)") | Out-Null
+    $sb.AppendLine("Model:      $($d.model)") | Out-Null
+    $sb.AppendLine("AI calls:   $($d.ai_calls)") | Out-Null
+    $sb.AppendLine("") | Out-Null
+    $sb.AppendLine("────────────────────────────────────────────") | Out-Null
+    $sb.AppendLine("CONVERSATION") | Out-Null
+    $sb.AppendLine("────────────────────────────────────────────") | Out-Null
+    $sb.AppendLine("") | Out-Null
+
+    if ($d.turns) {
+        foreach ($turn in $d.turns) {
+            $label = if ($turn.role -eq "user") { "YOU" } else { " AI" }
+            $sb.AppendLine("[$label]") | Out-Null
+            $sb.AppendLine($turn.content) | Out-Null
+            $sb.AppendLine("") | Out-Null
+        }
+    }
+
+    Set-Content -Path $outPath -Value $sb.ToString() -Encoding UTF8
+    Write-Msg -Role "ok" -Content "Exported to: $outPath"
+    Write-ActionLog "HISTORY EXPORTED: Session #$($d.session_number) -> $outName"
 }
 
 function Show-SessionDetail {
@@ -2245,6 +3135,9 @@ function Show-SessionDetail {
         }
     }
     Write-Host ""; Write-ThinDivider
+    Write-Host "   /history export [n]  -> export this session to a .txt file" -ForegroundColor $UI.DimText
+    Write-Host "   /history resume [n]  -> load this session into current context" -ForegroundColor $UI.DimText
+    Write-ThinDivider
 }
 
 function Load-SessionHistory {
@@ -2305,7 +3198,6 @@ function Invoke-UndoCommand {
     Write-ThinDivider
 
     switch ($last.type) {
-
         "FILE_CREATE" {
             $path = $last.data.path
             Write-Host "   Will delete: $path" -ForegroundColor $UI.BodyText
@@ -2335,7 +3227,7 @@ function Invoke-UndoCommand {
                 try {
                     Move-Item -Path $dest -Destination $src -Force
                     Write-Msg -Role "ok" -Content "Undone — moved back to temp."
-                    Write-ActionLog "UNDO FILE_PLACE — $dest → $src"
+                    Write-ActionLog "UNDO FILE_PLACE — $dest -> $src"
                 } catch { Write-Msg -Role "error" -Content "Undo failed: $($_.Exception.Message)" }
             } else { Write-Msg -Role "system" -Content "Undo cancelled." }
         }
@@ -2372,7 +3264,11 @@ function Invoke-AutoMemory {
         $reply = Invoke-AICall -UserMessage $summaryPrompt -SystemPrompt $sp -History $State.ChatHistory
         if ($reply) {
             $ts = Get-Date -Format "yyyy-MM-dd HH:mm"
-            Set-Content -Path "$DataFolder\memory.txt" -Value "[$ts — Session #$($State.SessionNumber)]`n$reply" -Encoding UTF8
+            # Atomic memory write
+            $memPath = "$DataFolder\memory.txt"
+            $tmp     = "$memPath.tmp"
+            Set-Content -Path $tmp -Value "[$ts — Session #$($State.SessionNumber)]`n$reply" -Encoding UTF8
+            Move-Item -Path $tmp -Destination $memPath -Force
             Write-Msg -Role "ok" -Content "Memory saved for next session."
             Write-ActionLog "AUTO-MEMORY written — $($reply.Length) chars"
         }
@@ -2402,6 +3298,7 @@ function Show-SessionStats {
     Write-Host ("   {0,-26} {1}" -f "AI calls:",        $State.AICallCount)        -ForegroundColor $UI.BodyText
     Write-Host ("   {0,-26} {1}" -f "Code executions:", $State.ExecutionCount)     -ForegroundColor $UI.BodyText
     Write-Host ("   {0,-26} {1}" -f "Chat turns:",      $State.ChatHistory.Count)  -ForegroundColor $UI.BodyText
+    Write-Host ("   {0,-26} {1}" -f "Tasks completed:", "$(($State.Tasks | Where-Object {$_.status -eq 'done'}).Count)/$($State.Tasks.Count)") -ForegroundColor $UI.BodyText
     Write-Host ("   {0,-26} {1}" -f "Undo stack:",      "$($State.UndoStack.Count) entries") -ForegroundColor $UI.BodyText
     if ($State.SessionLogPath) {
         Write-Host ("   {0,-26} {1}" -f "Log:", [System.IO.Path]::GetFileName($State.SessionLogPath)) -ForegroundColor $UI.DimText
@@ -2420,7 +3317,7 @@ function Invoke-MacroCommand {
         Write-Host "   Saved Macros" -ForegroundColor $UI.Header
         Write-ThinDivider
         if (-not $macros -or $macros.Count -eq 0) {
-            Write-Host "   No macros saved yet. Ask the AI to save a macro with /macro." -ForegroundColor $UI.DimText
+            Write-Host "   No macros saved yet. Ask the AI to save a macro." -ForegroundColor $UI.DimText
         } else {
             foreach ($f in $macros) {
                 try {
@@ -2430,8 +3327,8 @@ function Invoke-MacroCommand {
             }
         }
         Write-ThinDivider
-        Write-Host "   /macro list           → list saved macros" -ForegroundColor $UI.DimText
-        Write-Host "   /macro delete [name]  → delete a macro" -ForegroundColor $UI.DimText
+        Write-Host "   /macro list           -> list saved macros" -ForegroundColor $UI.DimText
+        Write-Host "   /macro delete [name]  -> delete a macro" -ForegroundColor $UI.DimText
         Write-ThinDivider
         return
     }
@@ -2454,7 +3351,87 @@ function Invoke-MacroCommand {
 }
 
 
+# ================================================================
+#  v1.1 — INTENT CLASSIFIER (local routing — skips API for trivia)
+# ================================================================
+
+function Invoke-IntentClassifier {
+    param([string]$Input)
+    # Returns a string response if handled locally, $null if should go to AI
+
+    $i = $Input.Trim().ToLower()
+
+    # Greetings
+    if ($i -match '^(hi|hello|hey|howdy|sup|yo|greetings|good morning|good evening|good afternoon)[\s!.]*$') {
+        $greetings = @(
+            "Hello! What can I help you with today?",
+            "Hey! Ready when you are.",
+            "Hi there — what would you like to do?",
+            "Good to see you. What's on the agenda?"
+        )
+        return $greetings[(Get-Random -Maximum $greetings.Count)]
+    }
+
+    # Thanks
+    if ($i -match '^(thanks|thank you|thx|ty|cheers|appreciate it|nice work|good job|great|awesome|perfect|cool)[\s!.]*$') {
+        $thanks = @(
+            "Happy to help!",
+            "Anytime.",
+            "Glad that worked out.",
+            "Of course — let me know if you need anything else."
+        )
+        return $thanks[(Get-Random -Maximum $thanks.Count)]
+    }
+
+    # Version / what are you
+    if ($i -match '\b(version|what version|which version|axon version)\b') {
+        return "I am AXON v$AXON_VERSION — AI Agent Framework."
+    }
+
+    # Status questions
+    if ($i -match '^(status|what.s the status|how are you|are you working|are you online|ping|pong)[\s?!.]*$') {
+        $profile = if ($State.ActiveProfile) { "$($State.ActiveProfile.profile_name) ($($State.ActiveProfile.model))" } else { "no profile loaded" }
+        return "AXON v$AXON_VERSION is running. Profile: $profile. AI calls this session: $($State.AICallCount). Use /status for the full dashboard."
+    }
+
+    # Help redirect
+    if ($i -match '^(help|commands|what can you do|what are the commands|show commands)[\s?!.]*$') {
+        Invoke-HelpCommand
+        return "[HANDLED_LOCALLY]"
+    }
+
+    # Current time / date
+    if ($i -match '\b(what.?s the time|current time|what time is it|what.?s today.?s date|today.?s date|what day is it|current date)\b') {
+        $now = Get-Date
+        return "Current date/time: $($now.ToString('dddd, MMMM d yyyy  HH:mm:ss'))"
+    }
+
+    # Disk/drive quick check
+    if ($i -match '^(disk|disk space|storage|free space|drives?)\s*(space|info|status|check)?[\s?!.]*$') {
+        try {
+            $drives = Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue | Where-Object { $_.Used -ne $null }
+            $lines  = $drives | ForEach-Object {
+                $used  = [Math]::Round($_.Used / 1GB, 1)
+                $free  = [Math]::Round($_.Free / 1GB, 1)
+                $total = [Math]::Round(($_.Used + $_.Free) / 1GB, 1)
+                "$($_.Name):  $used GB used / $free GB free / $total GB total"
+            }
+            return "Disk space:`n" + ($lines -join "`n")
+        } catch {
+            return $null  # fall through to AI
+        }
+    }
+
+    return $null  # Not handled locally — send to AI
+}
+
+
+# ================================================================
+#  SLASH COMMAND ROUTER
+# ================================================================
+
 function Invoke-SlashCommand {
+    param([string]$RawInput)
 
     $parts   = $RawInput.TrimStart("/").Split(" ", 2)
     $cmd     = $parts[0].ToLower().Trim()
@@ -2477,16 +3454,56 @@ function Invoke-SlashCommand {
         "profile"  { Invoke-ProfileCommand -Sub $subArgs }
         "settings" { Invoke-SettingsCommand }
 
+        # ── v1.1 Session status ──
+        "status"   { Invoke-StatusCommand }
+        "last"     { Invoke-LastCommand }
+        "recent"   { Invoke-RecentCommand }
+        "context"  { Invoke-ContextCommand }
+
+        "retry"    {
+            $retryMsg = Invoke-RetryCommand
+            if ($retryMsg -and $retryMsg -ne "") {
+                # Return signal to main loop to re-send this as a user message
+                $script:RETRY_MESSAGE = $retryMsg
+            }
+        }
+
+        "fixlast"  {
+            $fixMsg = Invoke-FixLastCommand
+            if ($fixMsg) { $script:RETRY_MESSAGE = $fixMsg }
+        }
+
+        # ── v1.1 Tasks ──
+        "tasks"    { Invoke-TasksCommand -Sub $subArgs }
+
+        # ── v1.1 Approval queue ──
+        "pending"  { Invoke-PendingCommand -Sub $subArgs }
+        "approve"  {
+            if ($subArgs -eq "all") { Invoke-ApproveAllCommand }
+            else { Invoke-ApproveCommand }
+        }
+        "deny"     {
+            if ($subArgs -eq "all") { Invoke-DenyAllCommand }
+            else { Invoke-DenyCommand }
+        }
+
         # ── Session & Files ──
         "memory"   { Invoke-MemoryCommand }
         "files"    { Invoke-FilesCommand }
-        "temp"     { Invoke-TempCommand }
+        "temp"     { Invoke-TempCommand -Sub $subArgs }
         "log"      { Invoke-LogCommand }
+        "logs"     {
+            if ($subArgs -eq "clean") { Invoke-LogsCleanCommand }
+            else { Invoke-LogCommand }
+        }
         "peek"     { Invoke-PeekCommand -Path $subArgs }
+        "open"     { Invoke-OpenCommand -Target $subArgs }
         "macro"    { Invoke-MacroCommand -Sub $subArgs }
 
-        # ── Phase 2+ stubs ──
+        # ── History ──
         "history"  { Invoke-HistoryCommand -Sub $subArgs }
+
+        # ── AI interaction ──
         "reload"   {
             if (-not $State.ActiveProfile) {
                 Write-Msg -Role "error" -Content "No active profile to reload."
@@ -2496,6 +3513,7 @@ function Invoke-SlashCommand {
                 Write-ActionLog "User triggered /reload — chat history cleared."
             }
         }
+
         "inject"   {
             if ([string]::IsNullOrWhiteSpace($subArgs)) {
                 Write-Msg -Role "error" -Content "Usage: /inject [text to add to context]"
@@ -2506,6 +3524,7 @@ function Invoke-SlashCommand {
                 Write-ActionLog "Context injected: $subArgs"
             }
         }
+
         "exec"     {
             if ($State.LastCodeBlock) {
                 Write-Msg -Role "system" -Content "Re-running last code block..."
@@ -2518,27 +3537,7 @@ function Invoke-SlashCommand {
                 Write-Msg -Role "system" -Content "No code block has been executed yet this session."
             }
         }
-        "approve"  {
-            # Approval happens inline during tag parsing — confirm/deny prompts
-            # appear automatically when the AI uses $CONFIRM$ or action tags.
-            # /approve is kept as a reminder; if there's a pending action object
-            # (future use), it would be processed here.
-            if ($State.PendingAction) {
-                Write-Msg -Role "system" -Content "Pending action cleared. Actions are approved inline — respond 'y' at the next prompt."
-                $State.PendingAction = $null
-            } else {
-                Write-Msg -Role "system" -Content "No pending action. Approvals happen inline when the AI requests them."
-            }
-        }
-        "deny" {
-            if ($State.PendingAction) {
-                $State.PendingAction = $null
-                Write-Msg -Role "ok" -Content "Pending action rejected and cleared."
-                Write-ActionLog "User denied pending action."
-            } else {
-                Write-Msg -Role "system" -Content "No pending action to deny."
-            }
-        }
+
         "undo"     { Invoke-UndoCommand }
 
         default {
@@ -2562,6 +3561,42 @@ function Read-UserInput {
 
 
 # ================================================================
+#  v1.1 — ERROR RECOVERY LOOP
+# ================================================================
+
+function Invoke-AIWithRecovery {
+    param([string]$UserMessage, [string]$SystemPrompt)
+
+    $maxRetries = 2
+    $attempt    = 0
+
+    while ($attempt -le $maxRetries) {
+        $reply = Invoke-AICall `
+            -UserMessage  $UserMessage `
+            -SystemPrompt $SystemPrompt `
+            -History      $State.ChatHistory
+
+        if ($reply) { return $reply }
+
+        $attempt++
+        if ($attempt -le $maxRetries) {
+            Write-Msg -Role "warn" -Content "API call failed. Retrying ($attempt/$maxRetries)..."
+            Start-Sleep -Seconds (2 * $attempt)
+
+            # Remove the failed user message from history if it got added
+            if ($State.ChatHistory.Count -gt 0 -and $State.ChatHistory[$State.ChatHistory.Count-1].role -eq "user") {
+                $State.ChatHistory.RemoveAt($State.ChatHistory.Count - 1)
+            }
+        }
+    }
+
+    Write-Msg -Role "error" -Content "Could not reach the AI after $maxRetries retries. Check your connection and API key (/profile doctor)."
+    Write-Msg -Role "system" -Content "Your message was not lost. Type it again when the API is available, or use /retry."
+    return $null
+}
+
+
+# ================================================================
 #  ENTRY POINT
 # ================================================================
 
@@ -2573,16 +3608,19 @@ function Start-AXON {
     Register-CoreFunctions
     Load-Plugins
     Initialize-SessionLog
-    Write-ActionLog "SESSION STARTED — Session #$($State.SessionNumber)  ID: $SESSION_ID"
+    Write-ActionLog "SESSION STARTED — Session #$($State.SessionNumber)  ID: $SESSION_ID  v$AXON_VERSION"
 
     [Console]::Clear()
     Write-Header
 
-    Write-Msg -Role "system" -Content "AXON v$AXON_VERSION initialized."
+    Write-Msg -Role "system" -Content "AXON v$AXON_VERSION initialized.  Mega Phase B active."
     Write-Msg -Role "system" -Content "Data folder: $DataFolder"
     if ($State.FunctionRegistry.Count -gt 0) {
         Write-Msg -Role "ok" -Content "$($State.FunctionRegistry.Count) functions registered."
     }
+
+    # Run health check
+    $healthIssues = Invoke-StartupHealthCheck
 
     if ($State.ActiveProfile) {
         Write-Msg -Role "ok" -Content "Profile loaded: $($State.ActiveProfile.profile_name)  ($($State.ActiveProfile.provider) / $($State.ActiveProfile.model))"
@@ -2594,8 +3632,17 @@ function Start-AXON {
     Write-Msg -Role "system" -Content "Type / for quick command hints, or /help for full reference."
     Write-Host ""
 
+    $script:RETRY_MESSAGE = $null
+
     while ($true) {
-        $userInput = Read-UserInput
+
+        # Handle /retry or /fixlast signal from slash router
+        if ($script:RETRY_MESSAGE) {
+            $userInput = $script:RETRY_MESSAGE
+            $script:RETRY_MESSAGE = $null
+        } else {
+            $userInput = Read-UserInput
+        }
 
         if ([string]::IsNullOrWhiteSpace($userInput)) { continue }
 
@@ -2609,33 +3656,34 @@ function Start-AXON {
             continue
         }
 
-        # ── Regular message → AI ──
+        # ── Regular message ──
         if (-not $State.ActiveProfile) {
             Write-Msg -Role "error" -Content "No active profile. Use /profile new first."
             continue
         }
 
+        # ── v1.1: Intent classifier — handle locally if possible ──
+        $localReply = Invoke-IntentClassifier -Input $userInput
+        if ($localReply -eq "[HANDLED_LOCALLY]") { continue }
+        if ($localReply) {
+            Write-Msg -Role "user" -Content $userInput
+            Write-Msg -Role "ai"   -Content $localReply
+            Write-ActionLog "INTENT CLASSIFIED (local): $userInput"
+            continue
+        }
+
+        # ── Send to AI ──
         Write-Msg -Role "user" -Content $userInput
+        $State.LastUserInput = $userInput
 
-        # Build full AXON interface document — fresh on every call
         $systemPrompt = Build-SystemPrompt
-
-        # Add user message to history BEFORE the call
         $State.ChatHistory.Add(@{ role = "user"; content = $userInput }) | Out-Null
 
-        $reply = Invoke-AICall `
-            -UserMessage  $userInput `
-            -SystemPrompt $systemPrompt `
-            -History      $State.ChatHistory
+        $reply = Invoke-AIWithRecovery -UserMessage $userInput -SystemPrompt $systemPrompt
 
         if ($reply) {
-            # Streaming already printed the text live — just parse tags now
-            $displayText = Get-DisplayText -Text $reply
-            # If the response was ONLY tags with no conversational text, nothing extra to show
-            # Parse and execute all tags in the response
             $feedback = Invoke-ParseResponse -RawReply $reply
 
-            # Inject execution feedback back into context so AI knows what happened
             if (-not [string]::IsNullOrWhiteSpace($feedback)) {
                 $State.ChatHistory.Add(@{
                     role    = "user"
@@ -2647,7 +3695,6 @@ function Start-AXON {
                 }) | Out-Null
             }
 
-            # Persist session log after every AI turn
             Save-SessionLog
         }
     }
